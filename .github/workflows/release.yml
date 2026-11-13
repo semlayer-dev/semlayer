@@ -2,7 +2,6 @@ name: release
 
 on:
   release:
-    if: ${{ !startsWith(github.ref_name, 'ext-v') }}
     types: [published]
   workflow_dispatch: {}
 
