@@ -2,6 +2,58 @@
 
 ## Unreleased
 
+## 0.7.0b3
+
+### `semlayer demo`: a warehouse for people who do not have one
+
+The first thing a new user needs is something to point `infer` at, and "find
+a warehouse first" is a wall in front of the only thing that would show them
+what this does. `semlayer demo` writes one: thirty-six tables with cryptic
+names, no declared primary or foreign keys anywhere in the DDL, an SCD2
+customer dimension, two aggregate tables that reconcile with their facts only
+under a filter nobody wrote down, and two deprecated legacy tables.
+
+A clean tutorial schema would prove nothing. The claim semlayer makes is
+about warehouses where the keys are undeclared and the rules are unwritten,
+so the thing handed to a new user has to be one of those. Everything the
+engine finds in it, it finds without help from the catalog.
+
+The generator moved out of `fixtures/` into the package to make this
+possible: a person who installed from PyPI has no copy of the repository,
+which is exactly the person who needs a warehouse to try.
+
+### The documented "with nothing installed" path did not work
+
+`docs/mcp.md` and `llms-install.md` told users to run
+
+    uvx --with "semlayer[warehouses]" semlayer mcp
+
+On a machine with no Python that **fails**. With no Python present `uv`
+downloads the newest CPython -- 3.15 today -- and `duckdb` publishes wheels
+only to cp314, so the install falls back to building from source, wants
+CMake, and dies after about two and a half minutes. `requires-python =
+">=3.10"` has no upper bound, so `uv` considered 3.15 fair game.
+
+Every uvx invocation in the docs now pins `--python 3.13`. Reproduced and
+fixed against a sandbox holding only a shell, `curl` and coreutils, where the
+whole path now works: `uv` installs in 4.7s, `semlayer demo` writes the
+warehouse, `infer --no-llm` produces a valid layer over 36 tables, and `lint`
+catches both the fan-out and the required filter. Cached calls take 0.28s.
+
+Raise or drop the pin once every dependency ships wheels for the Python `uv`
+would otherwise pick.
+
+### A VS Code and Cursor extension
+
+Lives in `extension/`. It carries no engine and speaks no MCP: it runs
+`semlayer <command> --json` and renders the result, so the editor cannot
+disagree with the terminal. SQL diagnostics as you type, the review queue as
+a two-pane screen, drift, inference settings, and one click to write an MCP
+client's config.
+
+See `docs/vscode.md`.
+
+
 ### `llms-install.md`, and an icon on the registry entry
 
 Agent-driven installers read `README.md` and `llms-install.md` and nothing

@@ -45,11 +45,35 @@ async function readJson(file: string): Promise<Record<string, unknown>> {
   }
 }
 
-/** True when this client already points at a semlayer server. */
-export async function isConfigured(client: Client): Promise<boolean> {
-  const cfg = await readJson(client.file);
-  const servers = cfg.mcpServers as Record<string, unknown> | undefined;
-  return !!servers && 'semlayer' in servers;
+/**
+ * What we can actually tell about a client, which is less than it looks.
+ *
+ *   absent     no config file -- the client has probably never run here
+ *   present    a config file, but no semlayer entry in it
+ *   configured its config names semlayer
+ *
+ * Note what is NOT here: whether the client is installed, running, or will
+ * ever read this file. An earlier version called `configured` "connected",
+ * which was wrong in a way a user caught immediately -- a config left behind
+ * by a client that is no longer installed reported as a live connection.
+ */
+export type ClientState = 'absent' | 'present' | 'configured';
+
+export async function stateOf(client: Client): Promise<ClientState> {
+  let raw: Uint8Array;
+  try {
+    raw = await vscode.workspace.fs.readFile(vscode.Uri.file(client.file));
+  } catch {
+    return 'absent';
+  }
+  try {
+    const text = Buffer.from(raw).toString('utf8').trim();
+    const cfg = (text ? JSON.parse(text) : {}) as Record<string, unknown>;
+    const servers = cfg.mcpServers as Record<string, unknown> | undefined;
+    return servers && 'semlayer' in servers ? 'configured' : 'present';
+  } catch {
+    return 'present';   // unreadable JSON is still a client that exists
+  }
 }
 
 /**

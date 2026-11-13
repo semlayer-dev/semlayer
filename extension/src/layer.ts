@@ -6,13 +6,14 @@
  * on content and deliberately cheap: read the head of the file, not all of it.
  */
 import * as vscode from 'vscode';
+import { countTables, layerName } from './yaml';
 
 const HEAD_BYTES = 4096;
 
 export interface Layer {
   uri: vscode.Uri;
   name: string;
-  tables: number;
+  tables: number | null;   // null when the document has no tables block
 }
 
 function looksLikeLayer(head: string): boolean {
@@ -30,12 +31,9 @@ async function describe(uri: vscode.Uri): Promise<Layer | null> {
   if (!looksLikeLayer(head)) { return null; }
 
   const text = Buffer.from(bytes).toString('utf8');
-  const name = /^\s*name\s*:\s*(\S+)/m.exec(head)?.[1]?.replace(/['"]/g, '')
+  const name = layerName(text)
     ?? uri.path.split('/').pop()!.replace(/\.ya?ml$/, '');
-  // Counting `- name:` under tables is an estimate, and it is only ever shown
-  // as one. Parsing the whole YAML to get it exactly would mean shipping a
-  // YAML parser to render a subtitle.
-  const tables = (text.match(/^\s{2,}-\s+name\s*:/gm) || []).length;
+  const tables = countTables(text);
   return { uri, name, tables };
 }
 

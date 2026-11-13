@@ -74,10 +74,6 @@
         "title": "semlayer: Connect an MCP client"
       },
       {
-        "command": "semlayer.trySample",
-        "title": "semlayer: Try the sample warehouse"
-      },
-      {
         "command": "semlayer.selectLayer",
         "title": "semlayer: Select the active layer"
       },
@@ -88,6 +84,38 @@
       {
         "command": "semlayer.openWalkthrough",
         "title": "semlayer: Get started"
+      },
+      {
+        "command": "semlayer.drift",
+        "title": "semlayer: Check for warehouse drift"
+      },
+      {
+        "command": "semlayer.settings",
+        "title": "semlayer: Inference settings"
+      },
+      {
+        "command": "semlayer.grants",
+        "title": "semlayer: Show the grants this needs"
+      },
+      {
+        "command": "semlayer.stitch",
+        "title": "semlayer: Stitch layers into a hub"
+      },
+      {
+        "command": "semlayer.install",
+        "title": "semlayer: Install the engine"
+      },
+      {
+        "command": "semlayer.recheck",
+        "title": "semlayer: Check for the engine again"
+      },
+      {
+        "command": "semlayer.openSetting",
+        "title": "semlayer: Set the engine path"
+      },
+      {
+        "command": "semlayer.trySample",
+        "title": "semlayer: Try it on a sample warehouse"
       }
     ],
     "configuration": {
@@ -96,7 +124,7 @@
         "semlayer.cliPath": {
           "type": "string",
           "default": "semlayer",
-          "description": "Path to the semlayer executable. Leave as 'semlayer' to use the one on your PATH."
+          "description": "How to run the engine: a path, or a command with arguments. Leave as 'semlayer' to use the one on your PATH. On a machine with no Python, 'uvx --from semlayer[warehouses] semlayer' works and is detected automatically."
         },
         "semlayer.layerPath": {
           "type": "string",
@@ -189,7 +217,7 @@
               "markdown": "media/walkthrough/lint.md"
             },
             "completionEvents": [
-              "onLanguage:sql"
+              "onContext:semlayer.sawSql"
             ]
           },
           {
@@ -213,7 +241,9 @@
     "package": "npm run compile -- --minify && vsce package --no-dependencies",
     "typecheck": "tsc --noEmit",
     "build:test": "tsc --outDir out --module es2022 --moduleResolution bundler --sourceMap false",
-    "test": "npm run build:test && node --test test/*.test.mjs"
+    "test": "npm run build:test && node --test test/*.test.mjs",
+    "shoot": "npm run build:test && node scripts/shoot.mjs --png",
+    "qa": "node scripts/qa.mjs"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

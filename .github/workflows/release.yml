@@ -2,6 +2,7 @@ name: release
 
 on:
   release:
+    if: ${{ !startsWith(github.ref_name, 'ext-v') }}
     types: [published]
   workflow_dispatch: {}
 
@@ -15,6 +16,13 @@ jobs:
     # minted for this repo and this workflow, no PAT anywhere. Same reasoning
     # as the PyPI job below -- there is no long-lived secret to leak, rotate
     # or forget, and a policy on the marketplace side pins who may publish.
+    #
+    # ONLY on an `ext-v*` tag. The engine and the extension are two artifacts
+    # with two version numbers and two audiences, and they should not be
+    # forced to ship together: without this condition, cutting an engine
+    # release also pushed whatever happened to be in extension/ to the
+    # marketplace, where a version cannot be replaced once published.
+    if: ${{ startsWith(github.ref_name, 'ext-v') }}
     runs-on: ubuntu-latest
     environment: vscode-marketplace
     permissions:
@@ -63,6 +71,7 @@ jobs:
           path: extension/*.vsix
 
   pypi:
+    if: ${{ !startsWith(github.ref_name, 'ext-v') }}
     runs-on: ubuntu-latest
     environment: pypi
     permissions:

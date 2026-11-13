@@ -10,17 +10,57 @@
  *
  * The walkthrough removes itself. A numbered "step 1 of 3" that survives to day
  * 30 is a wizard nobody can dismiss.
+ *
+ * All HTML lives in `views.ts`, which imports nothing from vscode so that every
+ * state can be rendered and screenshotted outside the editor.
  */
+import { spawn } from 'child_process';
+import * as os from 'os';
 import * as vscode from 'vscode';
 import * as layers from './layer';
 import * as mcp from './mcp';
-import { version } from './cli';
+import { run, setRoute } from './cli';
+import * as engine from './engine';
+import { renderPanel, driftLine, PanelState, EngineOffer, Drift } from './views';
 
-interface State {
-  cli: string | null;
-  layer: layers.Layer | undefined;
-  others: number;
-  clients: { label: string; configured: boolean }[];
+/**
+ * Drift costs a warehouse round trip, so it is not fetched on every refresh.
+ * Cached for the session, recomputed when the user asks or a run finishes.
+ */
+let cachedDrift: { line: string | null; at: number } | undefined;
+
+/** Whether this engine has `semlayer demo`. Undefined until asked once. */
+let canDemo: boolean | undefined;
+const DRIFT_TTL_MS = 10 * 60_000;
+
+export function invalidateDrift(): void { cachedDrift = undefined; }
+
+/** Forget what we learned about the engine: it may have been replaced. */
+export function invalidateEngine(): void { canDemo = undefined; }
+
+/**
+ * `semlayer drift --json` prints the plain sentence "no drift detected" rather
+ * than JSON when there is nothing to report, so this has to tolerate that
+ * instead of treating calm as a parse failure.
+ */
+export async function readDrift(doc: vscode.Uri, source: string): Promise<Drift | null> {
+  const { stdout } = await run(['drift', doc.fsPath, source, '--json'], { timeoutMs: 120_000 });
+  const text = stdout.trim();
+  if (!text.startsWith('{')) { return null; }
+  return JSON.parse(text) as Drift;
+}
+
+/** Does this command answer? One short call, nothing cached, nothing fetched. */
+async function probeCommand(argv: string[]): Promise<boolean> {
+  return new Promise((resolve) => {
+    const child = spawn(argv[0], argv.slice(1), { shell: false });
+    const done = (ok: boolean) => { clearTimeout(timer); child.kill(); resolve(ok); };
+    const timer = setTimeout(() => done(false), 10_000);
+    child.on('error', () => done(false));
+    child.on('close', (code) => done(code === 0));
+    child.stdout?.resume();
+    child.stderr?.resume();
+  });
 }
 
 export class Panel implements vscode.WebviewViewProvider {
@@ -32,118 +72,94 @@ export class Panel implements vscode.WebviewViewProvider {
   resolveWebviewView(view: vscode.WebviewView): void {
     this.view = view;
     view.webview.options = { enableScripts: true, localResourceRoots: [this.ctx.extensionUri] };
-    view.webview.onDidReceiveMessage((m: { command: string }) => {
+    view.webview.onDidReceiveMessage((m: { command?: string }) => {
       if (typeof m?.command === 'string') { void vscode.commands.executeCommand(m.command); }
     });
     void this.refresh();
   }
 
+  /**
+   * How this machine can run the engine, and what to offer if it cannot.
+   *
+   * Recomputed on every refresh rather than cached: a user who installs uv
+   * while the panel is open should see it the next time it redraws, without
+   * reloading the window or configuring anything.
+   */
+  private async engineOffer(): Promise<
+      { cli: string | null; offer?: EngineOffer; viaUvx?: boolean }> {
+    const configured = vscode.workspace.getConfiguration('semlayer')
+      .get<string>('cliPath') ?? 'semlayer';
+
+    // The probe runs the argv it is GIVEN, which is the launcher's own version
+    // check, not the route. Routing it through `version()` meant running the
+    // whole uvx invocation -- a multi-minute first fetch behind a ten-second
+    // timeout, which is why a machine with uvx on its PATH was told it had no
+    // engine.
+    const route = await engine.resolve(configured, {
+      works: (argv) => probeCommand(argv),
+    }, os.homedir());
+
+    if (route.kind === 'install') {
+      setRoute(undefined);
+      const [first, ...rest] = engine.installers();
+      return {
+        cli: null,
+        offer: {
+          kind: 'install',
+          label: first.label, command: first.command, note: first.note,
+          alternatives: rest,
+        },
+      };
+    }
+
+    // `resolve` already proved this route answers. Asking `version()` again
+    // re-runs the WHOLE command behind the same ten-second timeout -- which on
+    // a cold uvx is a multi-minute fetch -- and then throws that answer away.
+    // That is how a machine with a working uvx ended up on the no-engine
+    // panel with no install offer on it either: the route resolved, the
+    // second check timed out, and neither branch had anything to show.
+    setRoute(route.argv);
+    return { cli: route.argv.join(' '), viaUvx: route.kind === 'uvx' };
+  }
+
   async refresh(): Promise<void> {
     if (!this.view) { return; }
-    const [cli, layer, all] = await Promise.all([version(), layers.active(), layers.discover(5)]);
+    const engineState = await this.engineOffer();
+    const [layer, all] = await Promise.all([layers.active(), layers.discover(5)]);
+    const cli = engineState.cli;
     const clients = await Promise.all(mcp.clients().map(async (c) => (
-      { label: c.label, configured: await mcp.isConfigured(c) })));
-    this.view.webview.html = render({ cli, layer, others: Math.max(0, all.length - 1), clients });
+      { label: c.label, state: await mcp.stateOf(c) })));
+
+    // Does this engine have `semlayer demo`? It landed after 0.7.0b2, so the
+    // published version does not, and offering a sample that is not there is
+    // the dead end this replaced. Asked once per session, from --help, which
+    // is already cached by the time we get here.
+    if (cli && canDemo === undefined) {
+      const { stdout } = await run(['--help'], { timeoutMs: 20_000 })
+        .catch(() => ({ stdout: '' }));
+      canDemo = /^\s+demo\b/m.test(stdout) || /\bdemo\b/.test(stdout.split('\n')[1] ?? '');
+    }
+
+    const fresh = cachedDrift && Date.now() - cachedDrift.at < DRIFT_TTL_MS;
+    const state: PanelState = {
+      cli,
+      offer: engineState.offer,
+      viaUvx: engineState.viaUvx ?? false,
+      layer: layer ? { name: layer.name, tables: layer.tables } : undefined,
+      others: Math.max(0, all.length - 1),
+      clients,
+      drift: layer && fresh ? cachedDrift!.line : null,
+      canDemo: canDemo === true,
+      // "Try a sample warehouse" needs a `semlayer demo` command that does not
+      // exist: the fixtures live in the source tree, which a marketplace
+      // install has no copy of. Offering the button would be offering nothing.
+    };
+    this.view.webview.html = renderPanel(state);
   }
-}
 
-const esc = (s: string) => s.replace(/[&<>"']/g, (c) => (
-  { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
-
-function render(s: State): string {
-  const body = !s.cli ? noCli() : s.layer ? resting(s) : walkthrough(s);
-  return `<!DOCTYPE html><html><head><meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy"
-      content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
-<style>
-  body{font:13px/1.4 var(--vscode-font-family);color:var(--vscode-foreground);
-       background:var(--vscode-sideBar-background);padding:0;margin:0}
-  .pad{padding:10px 12px}
-  h3{font-size:11px;text-transform:uppercase;letter-spacing:.04em;font-weight:600;
-     color:var(--vscode-foreground);opacity:.75;margin:14px 0 6px;padding:0 12px}
-  p{margin:6px 0;color:var(--vscode-descriptionForeground)}
-  button{width:100%;padding:5px 10px;border:0;border-radius:2px;cursor:pointer;
-         background:var(--vscode-button-background);color:var(--vscode-button-foreground);
-         font:inherit;margin-top:8px}
-  button:hover{background:var(--vscode-button-hoverBackground)}
-  button.sec{background:var(--vscode-button-secondaryBackground);
-             color:var(--vscode-button-secondaryForeground)}
-  .row{display:flex;gap:7px;align-items:baseline;padding:4px 12px;cursor:pointer}
-  .row:hover{background:var(--vscode-list-hoverBackground)}
-  .row .t{flex:1;min-width:0}
-  .dim{color:var(--vscode-descriptionForeground);font-size:12px}
-  .mark{width:13px;flex:none;opacity:.8}
-  .ok{color:var(--vscode-charts-green)}
-  .warn{color:var(--vscode-editorWarning-foreground)}
-  code{font-family:var(--vscode-editor-font-family);font-size:12px}
-  a{color:var(--vscode-textLink-foreground);cursor:pointer;text-decoration:none}
-</style></head><body>${body}
-<script>
-  const vs = acquireVsCodeApi();
-  document.querySelectorAll('[data-cmd]').forEach((el) => {
-    el.addEventListener('click', () => vs.postMessage({ command: el.dataset.cmd }));
-  });
-</script></body></html>`;
-}
-
-function noCli(): string {
-  return `<div class="pad">
-    <p>The <code>semlayer</code> engine was not found on your PATH.</p>
-    <p class="dim">The extension runs the same CLI you would run in a terminal; it does not
-    carry an engine of its own.</p>
-    <p><code>pipx install semlayer</code></p>
-    <p class="dim">Already installed somewhere else? Set <code>semlayer.cliPath</code>.</p>
-    <button class="sec" data-cmd="semlayer.showOutput">Show output</button>
-  </div>`;
-}
-
-function walkthrough(s: State): string {
-  return `<div class="pad">
-    <p>semlayer reads a warehouse it can already reach and writes one YAML file
-    your agent loads over MCP.</p>
-  </div>
-  <h3>Get started</h3>
-  <div class="row" data-cmd="semlayer.loadLayer">
-    <span class="mark">&#9675;</span>
-    <span class="t">Connect to a warehouse<br><span class="dim">reads connections already on this machine</span></span>
-  </div>
-  <div class="row" data-cmd="semlayer.createLayer">
-    <span class="mark">&#9675;</span>
-    <span class="t">Create the semantic layer<br><span class="dim">the cost is shown before anything runs</span></span>
-  </div>
-  <div class="row" data-cmd="semlayer.configureClient">
-    <span class="mark">&#9675;</span>
-    <span class="t">Query your warehouse<br><span class="dim">serve the layer to an agent over MCP</span></span>
-  </div>
-  <div class="pad">
-    <button data-cmd="semlayer.createLayer">Create semantic layer</button>
-    <button class="sec" data-cmd="semlayer.trySample">Try the sample warehouse</button>
-    <p class="dim">36 tables, no credentials, no API key.</p>
-  </div>`;
-}
-
-function resting(s: State): string {
-  const l = s.layer!;
-  const connected = s.clients.filter((c) => c.configured).map((c) => c.label);
-  return `<div class="row" data-cmd="semlayer.selectLayer">
-    <span class="mark ok">&#10003;</span>
-    <span class="t"><b>${esc(l.name)}</b><br><span class="dim">${l.tables} tables${
-      s.others ? ` &middot; ${s.others} other layer${s.others > 1 ? 's' : ''} here` : ''}</span></span>
-  </div>
-  <h3>Serving</h3>
-  <div class="pad" style="padding-top:0">
-    <p class="dim">${connected.length
-      ? `${esc(connected.join(', '))} &mdash; connected`
-      : 'No MCP client is configured yet.'}</p>
-    <button class="sec" data-cmd="semlayer.configureClient">Connect an MCP client</button>
-  </div>
-  <h3>Findings</h3>
-  <div class="row" data-cmd="semlayer.review">
-    <span class="mark warn">&#9679;</span>
-    <span class="t">Review findings<br><span class="dim">nothing routes you here; the layer works with every question open</span></span>
-  </div>
-  <h3>Keep it fresh</h3>
-  <div class="pad" style="padding-top:0">
-    <button class="sec" data-cmd="semlayer.createLayer">Re-infer</button>
-  </div>`;
+  /** Called after a drift check so the sidebar can carry its one-line summary. */
+  setDrift(d: Drift | null): void {
+    cachedDrift = { line: driftLine(d), at: Date.now() };
+    void this.refresh();
+  }
 }

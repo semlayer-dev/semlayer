@@ -4,6 +4,50 @@ Thanks for your interest! During the beta we accept issues and small PRs;
 larger contributions are best discussed in an issue first. Contributions
 require agreeing to the project CLA (a bot will prompt on your first PR).
 
+## Checking that it actually works against a warehouse
+
+`tests/test_journey_live.py` walks the whole cycle end to end -- probe, infer,
+validate, review and record a verdict, lint, drift, then serve the result over
+MCP and run a query -- and names the step that broke. It is the answer to "do
+the MCP server and the VS Code extension still work", asked months later.
+
+It skips unless you point it at something:
+
+```bash
+# cheap smoke test first: a local file, no credentials, ~25s
+SEMLAYER_JOURNEY=duckdb:fixtures/build/messy_mart.duckdb \
+  .venv/bin/pytest tests/test_journey_live.py -v
+
+# then the real thing
+SEMLAYER_JOURNEY=snowflake:analytics_prod \
+  .venv/bin/pytest tests/test_journey_live.py -v
+```
+
+Inference runs deterministically by default; `SEMLAYER_JOURNEY_LLM=1` spends
+real model budget and exercises Describe too. Everything else is identical.
+
+Two of its tests are the product's central claim: a join that multiplies a
+measure must be caught by `lint` and REFUSED by `run_sql`, because that query
+executes cleanly on any warehouse and returns a number that is wrong.
+
+Unlike the connector tiers this one is NOT ignored in CI -- it is gated by the
+environment variable instead, so a CI run lists it as skipped and the tier
+stays visible rather than silently absent.
+
+**The extension.** There is no GUI in any of this. The extension holds no
+engine and speaks no MCP: it runs `semlayer <verb> --json` and parses the
+result, so the journey suite asserts exactly the contract it depends on, with
+the argv it builds. Its views are proved without an editor by
+`extension/test/features.test.mjs` (41 features, each carrying its evidence;
+`cd extension && npm run qa` prints the manifest). What is still uncovered is
+VS Code actually loading the extension, which would need
+`@vscode/test-electron`.
+
+`tests/test_mcp_contract.py` needs no warehouse and runs everywhere: it spawns
+the server over stdio and holds it to what a client sees -- the tool list, the
+handshake version, the instructions, and a `next` sentence when no layer is
+loaded.
+
 ## Setup
 
 ```bash
