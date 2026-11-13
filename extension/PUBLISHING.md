@@ -30,6 +30,12 @@ file, or the repo.
 
 ## Publishing
 
+The engine and the extension release separately, on separate tags: `v*`
+publishes the engine to PyPI and the MCP registry, `ext-v*` publishes this
+extension to the marketplaces. They have different version numbers and
+different audiences, and a marketplace version cannot be replaced once it is
+published, so neither should be able to drag the other out of the door.
+
 ```bash
 cd extension
 npm ci

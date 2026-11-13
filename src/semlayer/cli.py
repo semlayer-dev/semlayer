@@ -120,6 +120,11 @@ def _build_parser() -> argparse.ArgumentParser:
                         "conflict; a column the warehouse no longer has becomes "
                         "`orphaned`, never deleted. Tables outside --only are untouched.")
 
+    p = sub.add_parser("demo",
+                       help="Write a sample warehouse to try semlayer on")
+    p.add_argument("-o", "--out", default="messy_mart.duckdb",
+                   help="Where to write it (default: messy_mart.duckdb here)")
+
     _add_review_parser(sub)
     _add_maintain_parser(sub)
 
@@ -349,6 +354,28 @@ def _cmd_validate(args: argparse.Namespace) -> int:
             for e in result.errors:
                 print(f"        {e}")
     return 1 if failed else 0
+
+
+def _cmd_demo(args: argparse.Namespace) -> int:
+    """Write a warehouse for someone who has none to hand.
+
+    The first thing a new user needs is something to point `infer` at, and
+    "find a warehouse first" is a wall in front of the only thing that would
+    show them what this does. Thirty-six tables, no credentials, no API key.
+    """
+    from pathlib import Path
+
+    from semlayer.demo import build
+
+    out = build(Path(args.out))
+    size = out.stat().st_size / 1_000_000
+    print(f"wrote {out} ({size:.0f} MB, 36 tables)")
+    print()
+    print("It is deliberately messy: cryptic names, no declared keys, and")
+    print("business rules nobody wrote down. Infer a layer from it with")
+    print()
+    print(f"  semlayer infer duckdb:{out}")
+    return 0
 
 
 def _cmd_init(args: argparse.Namespace) -> int:
@@ -1021,6 +1048,7 @@ def _cmd_stitch(args: argparse.Namespace) -> int:
 _HANDLERS = {
     "validate": _cmd_validate,
     "stitch": _cmd_stitch,
+    "demo": _cmd_demo,
     "init": _cmd_init,
     "infer": _cmd_infer,
     "maintain": _cmd_maintain,

@@ -1,0 +1,9 @@
+{
+ "model": "claude-sonnet-5",
+ "system_sha": "1d25ef67b201",
+ "response": "[{\"id\": 0, \"verdict\": \"accept\", \"reason\": \"Direct metric total_tot_sls_amt available.\"},\n{\"id\": 1, \"verdict\": \"accept\", \"reason\": \"Direct metric ord_hdr_count available.\"},\n{\"id\": 2, \"verdict\": \"accept\", \"reason\": \"Direct metric total_tot_spend_amt available.\"},\n{\"id\": 3, \"verdict\": \"accept\", \"reason\": \"Matches avg_tot_amt_per_order metric and filter.\"},\n{\"id\": 4, \"verdict\": \"accept\", \"reason\": \"Direct metric ord_ln_count available.\"},\n{\"id\": 5, \"verdict\": \"accept\", \"reason\": \"Direct metric total_rtn_amt available.\"},\n{\"id\": 6, \"verdict\": \"accept\", \"reason\": \"Direct metric total_mrr_amt available.\"},\n{\"id\": 7, \"verdict\": \"accept\", \"reason\": \"Both metrics defined; difference computable.\"},\n{\"id\": 8, \"verdict\": \"accept\", \"reason\": \"Both metrics defined; comparison straightforward.\"},\n{\"id\": 9, \"verdict\": \"accept\", \"reason\": \"Both ratio metrics exist; comparable.\"},\n{\"id\": 10, \"verdict\": \"accept\", \"reason\": \"Both metrics defined; percentage computable.\"},\n{\"id\": 11, \"verdict\": \"reject\", \"reason\": \"Undefined term 'pricing efficiency' not modeled.\"}]",
+ "usage": {
+  "in": 6738,
+  "out": 915
+ }
+}

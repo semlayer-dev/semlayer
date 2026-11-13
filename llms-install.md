@@ -24,7 +24,7 @@ Add to the client's MCP config:
   "mcpServers": {
     "semlayer": {
       "command": "uvx",
-      "args": ["--with", "semlayer[warehouses]", "semlayer", "mcp"]
+      "args": ["--python", "3.13", "--with", "semlayer[warehouses]", "semlayer", "mcp"]
     }
   }
 }

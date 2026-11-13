@@ -1,7 +1,9 @@
 # Ship the bundle and what the marketplace page needs; nothing else.
 **
 !dist/extension.js
-!media/**
+!media/icon.png
+!media/activity.svg
+!media/walkthrough/**
 !package.json
 !README.md
 !CHANGELOG.md
@@ -10,3 +12,9 @@ out/**
 test/**
 src/**
 tsconfig.json
+
+# media/screenshots/ is deliberately NOT listed above. It is for the
+# marketplace page and the repo, both of which serve it over https; shipping
+# it inside the extension added a quarter of a megabyte to every install and
+# nothing reads it at runtime. A blanket `!media/**` put it back, which is why
+# the includes here are file by file.

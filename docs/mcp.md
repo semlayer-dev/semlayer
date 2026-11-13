@@ -35,6 +35,13 @@ Point the client at the command and leave the arguments off.
 
 ### With nothing installed
 
+> **The `--python` pin is not decoration.** On a machine with no Python at
+> all, `uv` downloads the newest CPython, and `duckdb` publishes wheels only
+> up to cp314 -- so without the pin the install falls back to building from
+> source, wants CMake, and fails after about two and a half minutes. That is
+> exactly the machine this section is for. Raise or drop the pin once every
+> dependency ships wheels for the Python `uv` would otherwise choose.
+
 If you have [`uv`](https://docs.astral.sh/uv/), this is the whole of step one.
 `uvx` fetches semlayer on first launch, so there is no terminal step at all:
 
@@ -43,7 +50,7 @@ If you have [`uv`](https://docs.astral.sh/uv/), this is the whole of step one.
   "mcpServers": {
     "semlayer": {
       "command": "uvx",
-      "args": ["--with", "semlayer[warehouses]", "semlayer", "mcp"]
+      "args": ["--python", "3.13", "--with", "semlayer[warehouses]", "semlayer", "mcp"]
     }
   }
 }
@@ -79,7 +86,7 @@ executable; `which semlayer` will tell you.
 ```bash
 claude mcp add semlayer -- semlayer mcp
 # or, with nothing installed:
-claude mcp add semlayer -- uvx --with "semlayer[warehouses]" semlayer mcp
+claude mcp add semlayer -- uvx --python 3.13 --with "semlayer[warehouses]" semlayer mcp
 ```
 
 ### Cursor

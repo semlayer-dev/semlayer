@@ -78,10 +78,13 @@ jobs:
       - name: Types (zero errors)
         run: npm run typecheck
       - name: Tests
-        # Source positions are reconstructed here, not reported by the engine.
-        # These guard that reconstruction: a lookbehind that excluded `.` once
-        # made every qualified column underline its table instead.
+        # Includes the feature manifest (test/features.mjs): every screen this
+        # extension claims carries the evidence for it, and a view no feature
+        # asserts on fails the build. The CLI contract tests skip here -- there
+        # is no engine or demo layer on a runner -- and run on a dev machine.
         run: npm test
+      - name: Feature manifest
+        run: npm run qa
       - name: Package
         run: npm run package
       - uses: actions/upload-artifact@v4

@@ -8,6 +8,7 @@
  */
 import { spawn } from 'child_process';
 import * as vscode from 'vscode';
+import { splitCommand, UVX_ARGV } from './engine';
 
 export class CliError extends Error {
   constructor(message: string, readonly code: number | null, readonly stderr: string) {
@@ -15,10 +16,34 @@ export class CliError extends Error {
   }
 }
 
-/** Resolved once per session and re-resolved when the setting changes. */
-export function cliPath(): string {
-  return vscode.workspace.getConfiguration('semlayer').get<string>('cliPath') || 'semlayer';
+/**
+ * How to invoke the engine, as argv.
+ *
+ * A LIST, not a path, because the one route that works on a machine with no
+ * Python is `uvx --from semlayer[warehouses] semlayer` -- a command plus three
+ * arguments. When the setting held only a binary path, that user had a working
+ * engine and no way to point us at it.
+ *
+ * `route` is set once the panel has worked out what this machine can run, so
+ * a user who installs uv mid-session does not have to configure anything.
+ */
+let route: string[] | undefined;
+
+export function setRoute(argv: string[] | undefined): void { route = argv; }
+
+export function cliArgv(): string[] {
+  const configured = vscode.workspace.getConfiguration('semlayer')
+    .get<string>('cliPath')?.trim();
+  if (configured && configured !== 'semlayer') { return splitCommand(configured); }
+  if (route?.length) { return route; }
+  return ['semlayer'];
 }
+
+/** What to show the user when naming the command. */
+export function cliPath(): string { return cliArgv().join(' '); }
+
+/** True when we are going through uvx, which is slower and worth saying so. */
+export function viaUvx(): boolean { return cliArgv()[0] === UVX_ARGV[0]; }
 
 export interface RunOptions {
   stdin?: string;
@@ -36,7 +61,8 @@ export interface RunResult {
 
 export function run(args: string[], opts: RunOptions = {}): Promise<RunResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn(cliPath(), args, {
+    const argv = cliArgv();
+    const child = spawn(argv[0], [...argv.slice(1), ...args], {
       cwd: opts.cwd,
       env: process.env,
       shell: false,          // never a shell: arguments are paths the user typed
@@ -71,7 +97,7 @@ export function run(args: string[], opts: RunOptions = {}): Promise<RunResult> {
       // ENOENT is the only failure worth a tailored message: it is what a
       // missing install looks like, and it is the most likely first-run state.
       reject(e.code === 'ENOENT'
-        ? new CliError(`'${cliPath()}' was not found on your PATH.`, null, String(e))
+        ? new CliError(`'${cliArgv()[0]}' was not found on your PATH.`, null, String(e))
         : new CliError(e.message, null, String(e)));
     }));
 
