@@ -7,6 +7,28 @@ which filters are mandatory. semlayer infers one from a warehouse it can read �
 profiling every column, discovering keys and join paths, matching aggregate
 tables to their facts — and writes it as one portable YAML file.
 
+<!-- Absolute URLs, not relative: the marketplace serves this README from its
+     own domain and relative image paths do not resolve there. They point at
+     the public repo, so they go live when the branch does. The generated ones
+     come from `npm run gallery`; the window captures are retaken by hand. -->
+
+![Two findings that execute cleanly and return a wrong number](https://raw.githubusercontent.com/semlayer-dev/semlayer/main/extension/media/screenshots/01-diagnostics.png)
+
+*A fan-out that doubles a total and a missing mandatory filter — both valid
+SQL, both caught before it ran.*
+
+### Three steps
+
+| | | |
+|---|---|---|
+| ![Connect](https://raw.githubusercontent.com/semlayer-dev/semlayer/main/extension/media/screenshots/01-connect.png) | ![Create](https://raw.githubusercontent.com/semlayer-dev/semlayer/main/extension/media/screenshots/02-create.png) | ![Query](https://raw.githubusercontent.com/semlayer-dev/semlayer/main/extension/media/screenshots/04-query.png) |
+| **Connect** — what this machine can already reach, including a sample warehouse that needs no credentials | **Create** — what the warehouse offers, what it will cost and how long, before anything is spent | **Query** — point an MCP client at the layer and ask it something |
+
+Then day 2: [what drifted](https://raw.githubusercontent.com/semlayer-dev/semlayer/main/extension/media/screenshots/07-drift.png)
+in the warehouse, and [the questions](https://raw.githubusercontent.com/semlayer-dev/semlayer/main/extension/media/screenshots/06-review.png)
+the engine could not settle on its own — with both consequences shown before
+you click either way.
+
 ## What this extension does
 
 **Checks your SQL against the layer, as you type.** Not just unknown tables and

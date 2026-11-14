@@ -8,16 +8,26 @@
  * panel told every one of them `pipx install semlayer` and stopped.
  *
  * `uv` is the floor. It is a single static binary that installs its own
- * Python, so it is the only bootstrap that works from nothing, and `uvx` then
- * fetches semlayer on first use -- which is already what docs/mcp.md tells
- * MCP users to do. Measured here: 13.8s on the first fetch, then 0.32s per
- * invocation against 0.21s for a direct install.
+ * Python, so it is the only bootstrap that works from nothing.
+ *
+ * What it is NOT is the way to run the engine. Routing every call through
+ * `uvx --from semlayer[warehouses]` looked free -- no install step, fetches on
+ * first use -- but the fetch is 65 packages including duckdb, and it happens
+ * inside whichever call happens to be first. Here that was the panel's
+ * 20-second `--help` probe, which timed out, cached the failure, and hid the
+ * sample-warehouse button for the rest of the session. The cost was never
+ * avoided, only moved somewhere nobody was watching for it.
+ *
+ * So uv installs the engine ONCE, with `uv tool install`, and leaves a real
+ * `semlayer` binary behind. The install is visible, in a terminal, where a
+ * minute of downloading is legible instead of looking like a hang; every call
+ * after it is ~0.2s and no timeout in this extension is load-bearing.
  */
 /** How we would run the engine, in descending order of how nice it is. */
 export type Route =
   | { kind: 'path'; argv: string[] }        // `semlayer` is on PATH
   | { kind: 'configured'; argv: string[] }  // the user set semlayer.cliPath
-  | { kind: 'uvx'; argv: string[] }         // uvx is here; no install needed
+  | { kind: 'uvx'; argv: string[] }         // a uvx command the user configured
   | { kind: 'install'; via: Installer }     // nothing usable; offer a bootstrap
   ;
 
@@ -28,6 +38,22 @@ export interface Installer {
   command: string;
   /** Why this one and not another. */
   note: string;
+}
+
+/**
+ * The one-time engine install, for a machine that has uv but no engine.
+ *
+ * This is the step `uvx` appeared to save and did not: the download happens
+ * either way. Here it happens on purpose, once, with output on screen.
+ */
+export function engineInstall(uv = 'uv'): Installer {
+  return {
+    label: 'Install the engine',
+    command: `${uv} tool install --python ${UVX_PYTHON} "semlayer[warehouses]"`,
+    note: 'One time, about a minute -- it downloads a Python and the warehouse '
+        + 'drivers. It leaves a `semlayer` command on your PATH, and every call '
+        + 'after this one is instant.',
+  };
 }
 
 /**
@@ -145,6 +171,15 @@ export function candidates(home: string, platform = process.platform): string[][
   return out;
 }
 
+/** Where a `uv` binary lands, same reasoning as `candidates`. */
+export function uvCandidates(home: string, platform = process.platform): string[] {
+  const exe = platform === 'win32' ? '.exe' : '';
+  const sep = platform === 'win32' ? '\\' : '/';
+  return ['uv',
+          [home, '.local', 'bin', `uv${exe}`].join(sep),
+          [home, '.cargo', 'bin', `uv${exe}`].join(sep)];
+}
+
 export interface Probe {
   /** Does this command answer at all? */
   works(argv: string[]): Promise<boolean>;
@@ -180,19 +215,30 @@ export async function resolve(configured: string, probe: Probe,
   const raw = configured.trim();
   if (raw && raw !== 'semlayer') {
     const argv = splitCommand(raw);
-    if (await probe.works(probeFor(argv))) { return { kind: 'configured', argv }; }
+    if (await probe.works(probeFor(argv))) {
+      // A user who deliberately set a uvx command still gets told so: the
+      // first call through it fetches, and silence there reads as a hang.
+      const base = argv[0].replace(/\\/g, '/').split('/').pop() ?? argv[0];
+      return base === 'uvx' || base === 'uvx.exe'
+        ? { kind: 'uvx', argv } : { kind: 'configured', argv };
+    }
   }
   if (await probe.works(probeFor(['semlayer']))) {
     return { kind: 'path', argv: ['semlayer'] };
   }
-  if (await probe.works(probeFor(UVX_ARGV))) { return { kind: 'uvx', argv: UVX_ARGV }; }
 
   // Not on PATH, which does NOT mean not installed. See `candidates`.
   for (const argv of candidates(home)) {
-    if (await probe.works(probeFor(argv))) {
-      return argv[0].endsWith('uvx') || argv[0].endsWith('uvx.exe')
-        ? { kind: 'uvx', argv }
-        : { kind: 'path', argv };
+    if (await probe.works(probeFor(argv))) { return { kind: 'path', argv }; }
+  }
+
+  // A uv here means the hard part is done: it brings its own Python, so the
+  // engine is one visible command away. We offer that command rather than
+  // routing calls through `uvx` and paying for the fetch inside whichever
+  // call runs first.
+  for (const uv of uvCandidates(home)) {
+    if (await probe.works([uv, '--version'])) {
+      return { kind: 'install', via: engineInstall(uv) };
     }
   }
   return { kind: 'install', via: installers()[0] };

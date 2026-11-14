@@ -126,3 +126,97 @@ def test_init_snowflake_creates_a_user_that_can_actually_log_in():
     assert "-pubout" in sql
     # and the environment has to name the key rather than a secret
     assert "SNOWFLAKE_READER_PRIVATE_KEY_PATH" in sql
+
+
+def _run_discover(args, cwd, env=None):
+    import os
+    e = dict(os.environ)
+    e.pop("SNOWFLAKE_ACCOUNT", None)
+    e.update(env or {})
+    return subprocess.run([sys.executable, "-m", "semlayer.cli", "discover", *args],
+                          cwd=cwd, env=e, capture_output=True, text=True)
+
+
+def test_discover_json_lists_a_duckdb_file_in_the_folder(tmp_path):
+    """The connect screen's list. Shipped as an MCP tool and nothing else.
+
+    `session.discover` has answered this since the MCP server shipped, so the
+    extension's connect screen was built as a bare input box asking the user
+    for a URI they had to already know -- and the gap was recorded as
+    impossible ("no CLI verb does this") rather than as unbuilt.
+    """
+    import json
+    (tmp_path / "warehouse.duckdb").write_bytes(b"")
+    r = _run_discover(["--json"], tmp_path)
+    assert r.returncode == 0, r.stderr
+    found = json.loads(r.stdout)
+    assert any(e["uri"] == "duckdb:warehouse.duckdb" for e in found), found
+    for e in found:
+        assert set(e) >= {"uri", "kind", "source", "supported", "note"}
+
+
+def test_discover_finding_nothing_is_an_answer_not_a_failure(tmp_path):
+    """Exit 0 with an empty list.
+
+    A non-zero code here would make every caller treat "you have no warehouse
+    configured" as a broken install, which is the opposite of what the screen
+    needs to say.
+    """
+    import json
+    r = _run_discover(["--json"], tmp_path)
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout) == []
+
+    human = _run_discover([], tmp_path)
+    assert human.returncode == 0
+    assert "No warehouse connections found" in human.stdout
+    assert "semlayer demo" in human.stdout, "it must name a way forward"
+
+
+def test_discover_marks_a_half_configured_connection_and_says_what_is_missing(tmp_path):
+    """The row that earns the screen its place.
+
+    An account set and no credentials is the normal half-configured state, and
+    the note is the whole value: it names the variables to add.
+    """
+    r = _run_discover([], tmp_path, env={"SNOWFLAKE_ACCOUNT": "acme"})
+    assert r.returncode == 0, r.stderr
+    assert "!" in r.stdout
+    assert "SNOWFLAKE_READER_USER" in r.stdout
+    assert "cannot open yet" in r.stdout
+
+
+def test_drift_json_is_json_even_when_nothing_drifted(tmp_path, capsys):
+    """`--json` must never print prose.
+
+    No drift is the commonest outcome, and it printed one sentence whether or
+    not JSON was asked for, so every agent and CI step parsing this had to
+    special-case it -- against a shape nobody had written down. Found by
+    walking the extension end to end on a clean directory.
+    """
+    import json
+
+    import duckdb
+
+    from semlayer.cli import main
+    from semlayer.pipeline import infer
+    from semlayer.source import DuckDBSource
+
+    db = tmp_path / "w.duckdb"
+    con = duckdb.connect(str(db))
+    con.execute("create table t (id integer primary key, n varchar)")
+    con.execute("insert into t values (1, 'a')")
+    doc = infer(DuckDBSource(con))
+    con.close()
+
+    layer = tmp_path / "w.yaml"
+    layer.write_text(__import__("yaml").safe_dump(doc))
+    capsys.readouterr()
+
+    assert main(["drift", str(layer), f"duckdb:{db}", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["events"] == []
+    # The empty answer carries every key the non-empty one does, so a consumer
+    # written against one shape does not fall over on the other.
+    assert set(payload) == {"events", "orphaned", "needs_inference", "affected",
+                            "broken_cqs", "demoted", "retable"}

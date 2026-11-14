@@ -8,11 +8,12 @@
 import * as vscode from 'vscode';
 import { run } from './cli';
 import {
-  renderScope, renderSettings, renderGrants, renderDrift,
-  Settings, DEFAULT_SETTINGS, Probe, Drift,
+  renderGrants, renderDrift,
+  Settings, DEFAULT_SETTINGS, Probe, Drift, Connection,
 } from './views';
 
-type Handler = (msg: { type: string; state?: Settings }, panel: vscode.WebviewPanel) => void;
+type Msg = { type: string; state?: Settings; source?: string; family?: string };
+type Handler = (msg: Msg, panel: vscode.WebviewPanel) => void;
 
 function openPanel(id: string, title: string, html: string, onMessage: Handler): vscode.WebviewPanel {
   const panel = vscode.window.createWebviewPanel(
@@ -27,6 +28,8 @@ let settings: Settings = { ...DEFAULT_SETTINGS };
 
 export function currentSettings(): Settings { return settings; }
 export function resetSettings(): void { settings = { ...DEFAULT_SETTINGS }; }
+/** The sidebar's Create screen edits the same session settings Day 2 does. */
+export function setSettings(s: Settings): void { settings = { ...settings, ...s }; }
 
 /**
  * `semlayer probe --json`: what evidence this warehouse offers, and what
@@ -47,24 +50,52 @@ export async function probe(source: string, out: vscode.OutputChannel): Promise<
   }
 }
 
-/** The screen that shows the bill before anything is spent. */
-export function showScope(p: Probe, source: string, onCreate: () => void): void {
-  const panel = openPanel('semlayer.scope', `Scope · ${source}`,
-    renderScope(p, source, settings), (m, pnl) => {
-      if (m.type === 'create') { pnl.dispose(); onCreate(); }
-      if (m.type === 'settings') { pnl.dispose(); showSettings(source, onCreate); }
-    });
-  panel.reveal();
+/**
+ * What this machine can already reach.
+ *
+ * Returns an empty list rather than throwing on an engine that has no
+ * `discover` verb -- it landed after 0.7.0b3, so a user on the published
+ * version has an engine without it, and the connect screen must still open
+ * and still offer the sample and a typed connection. An absent verb is a
+ * shorter list, not a broken screen.
+ */
+export async function discover(out: vscode.OutputChannel): Promise<Connection[]> {
+  // The cwd matters here -- one of the sources discover reads is "DuckDB files
+  // in the working directory" -- and `run` now defaults it to the folder the
+  // user opened, for this call and every other one.
+  try {
+    const { stdout, code } = await run(['discover', '--json'], { timeoutMs: 60_000 });
+    if (code !== 0 || !stdout.trim().startsWith('[')) {
+      out.appendLine(`discover: this engine has no \`discover\` verb; skipping the list`);
+      return [];
+    }
+    return JSON.parse(stdout) as Connection[];
+  } catch (e) {
+    out.appendLine(`discover: ${e instanceof Error ? e.message : String(e)}`);
+    return [];
+  }
 }
 
-/** Every inference flag that exists, as a form. Reused by Create and Day 2. */
-export function showSettings(source: string, onCreate: () => void): void {
-  openPanel('semlayer.settings', 'semlayer settings',
-    renderSettings(settings, source), (m, pnl) => {
-      if (m.type === 'settings' && m.state) { settings = { ...settings, ...m.state }; }
-      if (m.type === 'create') { pnl.dispose(); onCreate(); }
-      if (m.type === 'close') { pnl.dispose(); }
-    });
+/**
+ * The grant scripts the connect screen shows under its selection.
+ *
+ * All three are fetched up front because the screen switches between them
+ * without a round trip. They are local renders of a template -- no warehouse
+ * is contacted -- so three calls cost nothing worth optimising. A family whose
+ * call fails is simply absent, and the screen hides that section.
+ */
+export async function grantScripts(out: vscode.OutputChannel): Promise<Record<string, string>> {
+  const families = ['snowflake', 'bigquery', 'postgres'];
+  const got: Record<string, string> = {};
+  await Promise.all(families.map(async (f) => {
+    try {
+      const { stdout, code } = await run(['init', f], { timeoutMs: 30_000 });
+      if (code === 0 && stdout.trim()) { got[f] = stdout.trimEnd(); }
+    } catch (e) {
+      out.appendLine(`init ${f}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }));
+  return got;
 }
 
 /**
@@ -72,11 +103,18 @@ export function showSettings(source: string, onCreate: () => void): void {
  * Snowflake and Postgres, gcloud IAM commands for BigQuery, and it refuses
  * DuckDB because a file has no grants. The view handles all four.
  */
-export async function showGrants(source: string, out: vscode.OutputChannel): Promise<void> {
-  const family = source.startsWith('duckdb') ? 'duckdb'
+export function familyOf(source: string): string {
+  return source.startsWith('duckdb') ? 'duckdb'
     : source.startsWith('bigquery') ? 'bigquery'
     : source.startsWith('snowflake') ? 'snowflake'
     : 'postgres';
+}
+
+export async function showGrants(source: string, out: vscode.OutputChannel): Promise<void> {
+  // A bare family name is accepted so the connect screen can ask for grants
+  // before any connection exists -- which is exactly when they are needed.
+  const family = ['duckdb', 'bigquery', 'snowflake', 'postgres'].includes(source)
+    ? source : familyOf(source);
 
   let script: string | null = null;
   if (family !== 'duckdb') {

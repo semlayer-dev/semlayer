@@ -79,9 +79,10 @@ def home() -> Path:
 
     Read on every call rather than captured at import, which is what
     `telemetry._DIR` does and then cannot be changed by a test without
-    reloading the module.
+    reloading the module. Defined in `env_file` so the LLM provider can
+    resolve `SEMLAYER_MODEL` from the same file without importing this one.
     """
-    return Path(os.environ.get("SEMLAYER_HOME", Path.home() / ".semlayer"))
+    return env_file.home()
 
 
 def env_path() -> Path:
@@ -91,7 +92,7 @@ def env_path() -> Path:
     starts the server wherever it likes, and a credential file that is found
     only from one directory is a credential file that silently stops working.
     """
-    return home() / ".env"
+    return env_file.env_path()
 
 
 def environment() -> Mapping[str, str]:

@@ -116,6 +116,18 @@
       {
         "command": "semlayer.trySample",
         "title": "semlayer: Try it on a sample warehouse"
+      },
+      {
+        "command": "semlayer.createStep",
+        "title": "semlayer: Create the semantic layer"
+      },
+      {
+        "command": "semlayer.serve",
+        "title": "semlayer: Query your warehouse"
+      },
+      {
+        "command": "semlayer.home",
+        "title": "semlayer: Maintain the layer"
       }
     ],
     "configuration": {
@@ -237,13 +249,15 @@
   },
   "scripts": {
     "compile": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node18",
+    "vscode:prepublish": "npm run compile",
     "watch": "npm run compile -- --sourcemap --watch",
     "package": "npm run compile -- --minify && vsce package --no-dependencies",
     "typecheck": "tsc --noEmit",
     "build:test": "tsc --outDir out --module es2022 --moduleResolution bundler --sourceMap false",
     "test": "npm run build:test && node --test test/*.test.mjs",
     "shoot": "npm run build:test && node scripts/shoot.mjs --png",
-    "qa": "node scripts/qa.mjs"
+    "qa": "node scripts/qa.mjs",
+    "gallery": "npm run shoot && node scripts/gallery.mjs"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

@@ -34,6 +34,28 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 CHEAP_MODEL = "claude-haiku-4-5-20251001"
+
+
+def resolve_model(explicit: str | None = None) -> str:
+    """Which model a run uses: the flag, else `SEMLAYER_MODEL`, else the cheap tier.
+
+    The default is deliberate and stays the default: the published cost model
+    ($0.70/100 tables) and every committed cassette are measured on it. This
+    exists so that someone who wants better descriptions than Haiku writes can
+    have them without editing the engine -- a choice the CLI exposes as
+    `--model` and the MCP server picks up from the same `.env` file the API key
+    comes from. Nothing else in the engine reads it, so a model named here
+    applies to every call the run makes.
+
+    Cassette keys include the model name, so a changed model is a full set of
+    live calls, not a replay. That is the honest behaviour: the cassette holds
+    what Haiku said, and it is not what Opus would say.
+    """
+    if explicit and explicit.strip():
+        return explicit.strip()
+    from semlayer import env_file
+    said = env_file.environment(env_file.env_path()).get("SEMLAYER_MODEL", "")
+    return said.strip() or CHEAP_MODEL
 # Escalation ceiling for a truncated or empty response: 1500 -> 6000 ->
 # 24000, then fail loudly. Bounded so a pathological prompt cannot bill
 # unboundedly while retrying.
@@ -155,10 +177,14 @@ class AnthropicProvider:
     only — they can never silently spend money or produce unpinned outputs.
     """
 
-    def __init__(self, model: str = CHEAP_MODEL, cassette_dir: Path | None = None,
+    def __init__(self, model: str | None = None, cassette_dir: Path | None = None,
                  allow_live: bool | None = None, *, cache: bool = True,
                  repo_cache: bool = True):
         """Build a provider, with the response cache on unless told otherwise.
+
+        `model=None` means "whatever `resolve_model` says" -- the `--model`
+        flag, else `SEMLAYER_MODEL` in the `.env` file, else the cheap tier.
+        An explicit value still wins, which is how the benchmark pins one.
 
         `cache=False` switches the cache off for this provider: no replay, no
         recording, nothing written to disk. `repo_cache=False` keeps the cache
@@ -166,7 +192,7 @@ class AnthropicProvider:
         explicit `cassette_dir` overrides both, which is how the tests pin a
         temporary directory.
         """
-        self.model = model
+        self.model = resolve_model(model)
         self.cassette_dir = (
             (cassette_dir or resolve_cache(repo_ok=repo_cache)) if cache else None
         )

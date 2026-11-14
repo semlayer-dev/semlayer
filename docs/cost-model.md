@@ -5,6 +5,12 @@ Measured 2026-07-18 on messy_mart (36 tables, 198 columns) with the cheap tier
 (profiling SQL) is separate and customer-paid; on the fixtures it is seconds
 of an XS warehouse.
 
+The cheap tier is the default and these numbers are measured on it. A run can
+name another model — `semlayer infer … --model <id>`, or `SEMLAYER_MODEL=<id>`
+in `$SEMLAYER_HOME/.env` — in which case every figure on this page scales with
+that model's price per token and nothing here has been re-measured for it. The
+model used is recorded in the document's `generated_by.model`.
+
 | Stage | LLM calls | Tokens (in/out) | Cost @ Haiku ($1/$5 per M) | Per 100 tables |
 |---|---|---|---|---|
 | Profile — typing escalation (~20% of columns, 1 call/table w/ escalations) | 25 | 16.4K / 5.1K | $0.042 | ~$0.12 |

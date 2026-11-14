@@ -74,8 +74,16 @@ installable without a publish.
 
 ## Still missing before a first publish
 
-- **Screenshots.** The marketplace page is mostly a screenshot gallery, and
-  there are none. They have to be of the real extension running, not of the
-  design mock in `beta/ux/` — the mock shows surfaces this version does not
-  implement (the agent chat panel, review as an editor tab).
+- **Two window captures.** The gallery is in the README now. Eight of its
+  images are generated — `npm run gallery` renders every view and copies the
+  published subset into `media/screenshots/`, so they cannot go stale while
+  the code moves. The other two need a real VS Code window and are listed as
+  `CAPTURED` in `scripts/gallery.mjs`: `01-diagnostics.png` (a SQL file with
+  squiggles and the Problems panel open — the single most important image on
+  the page) and `02-mcp-clients.png` (the client quick pick). Both are from
+  2026-11-05 and their sidebar strip shows a panel layout that no longer
+  exists. Retake them by walking the extension; the editor half of the
+  diagnostics shot is still accurate.
+  Never shoot the design mock in `beta/ux/` for this: it shows surfaces this
+  version does not implement (the agent chat panel, review as an editor tab).
 - **A `semlayer.dev/vscode` page** to link to from the README.

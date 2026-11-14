@@ -8,6 +8,7 @@ import os
 import time
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any
 
 from semlayer.describe import describe_source
@@ -243,7 +244,28 @@ def open_source_from_uri(uri: str):
         import duckdb
 
         from semlayer.source import DuckDBSource
-        return DuckDBSource(duckdb.connect(*_duckdb_args(uri.split(":", 1)[1])))
+        path = uri.split(":", 1)[1]
+        try:
+            return DuckDBSource(duckdb.connect(*_duckdb_args(path)))
+        except duckdb.Error as e:
+            # The same contract the unsupported-uri branch below states: a
+            # path the user typed is their mistake to fix, not a crash. This
+            # branch let duckdb's IOException escape, so a mistyped or
+            # misresolved path reached the user as a Python traceback and was
+            # recorded as `internal` -- which should mean OUR bug.
+            #
+            # The hint names the ABSOLUTE path and the directory it was
+            # resolved against, because a bare "database does not exist" is
+            # both true and useless when the real error is that the caller was
+            # standing somewhere else. `semlayer discover` emits relative
+            # DuckDB URIs, so this is the common case rather than an exotic
+            # one.
+            resolved = Path(path).resolve() if path not in ("", ":memory:") else path
+            raise SourceError(
+                f"could not open the DuckDB database {path!r}",
+                hint=f"looked for {resolved} (relative paths resolve against "
+                     f"{Path.cwd()}); duckdb said: {e}",
+            ) from e
     # Snowflake takes a connection name or a URL as well as the environment:
     # a bare word was the only accepted form, and every other spelling a
     # person might paste was refused as an unsupported URI. See

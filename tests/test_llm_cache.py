@@ -142,4 +142,7 @@ def test_both_cli_entry_points_opt_out_of_the_repo_cache():
     and no runtime test would notice: the repo cache works, that is the bug."""
     src = (REPO / "src" / "semlayer" / "cli.py").read_text()
     assert src.count("AnthropicProvider(") == 2, "a construction site moved; check both"
-    assert src.count("AnthropicProvider(cache=not args.no_llm_cache, repo_cache=False)") == 2
+    # Per argument rather than per exact line, because the call now spans two
+    # lines and matching its formatting made the test about whitespace.
+    for arg in ("repo_cache=False", "cache=not args.no_llm_cache", "model=args.model"):
+        assert src.count(arg) == 2, f"a CLI construction site is missing {arg}"

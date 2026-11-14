@@ -8,10 +8,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
-import { countTables, layerName } from '../out/yaml.js';
+import { countTables, layerName, layerWarehouse } from '../out/yaml.js';
 
 const DOC = `spec_version: 0.4.0
 name: messy_mart
+warehouse: duckdb:messy_mart.duckdb
 semantic_layer:
   generated_by:
     engine: 0.7.0b1
@@ -59,6 +60,22 @@ test('reads the document name', () => {
   assert.equal(layerName(DOC), 'messy_mart');
   assert.equal(layerName('name: "quoted_name"\n'), 'quoted_name');
   assert.equal(layerName("name: 'single'\n"), 'single');
+});
+
+test('reads the warehouse the layer was built from', () => {
+  // This is what makes step two work in a freshly reloaded window: the
+  // in-memory "last source" is empty there, and a reload is how the extension
+  // gets installed, so that was the normal case rather than an edge one.
+  assert.equal(layerWarehouse(DOC), 'duckdb:messy_mart.duckdb');
+  assert.equal(layerWarehouse('semantic_layer:\n  warehouse: "snowflake:prod"\n'),
+               'snowflake:prod');
+  assert.equal(layerWarehouse('semantic_layer:\n  tables: []\n'), null);
+});
+
+test('does not mistake a column named warehouse for the source', () => {
+  assert.equal(layerWarehouse(
+    'semantic_layer:\n  tables:\n  - name: t\n    columns:\n'
+    + '    - name: c\n      warehouse: nope\n'), null);
 });
 
 test('does not mistake a table name for the document name', () => {
