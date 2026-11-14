@@ -61,12 +61,23 @@ startup, so a window that was already open will not see semlayer.
 
 ## Requirements
 
-**The `semlayer` CLI.** The extension carries no engine: it runs the same
-command you would run in a terminal and reads its `--json` output.
+**The `semlayer` CLI, 0.7.0b5 or newer.** The extension carries no engine: it
+runs the same command you would run in a terminal and reads its `--json`
+output.
 
 ```
-pipx install semlayer
+uv tool install --python 3.13 "semlayer[warehouses]"
 ```
+
+You do not have to run this yourself — with nothing installed, the panel
+offers one button that installs [uv](https://docs.astral.sh/uv/) and the
+engine in a single step. uv brings its own Python, so this works on a machine
+that has none.
+
+The `[warehouses]` extra carries the Snowflake, BigQuery and Postgres
+drivers. Without it the engine can *find* your warehouse and not open it.
+`pip install --user "semlayer[warehouses]"` and `pipx install
+"semlayer[warehouses]"` work too, if you already have Python.
 
 If it lives somewhere else, set `semlayer.cliPath`.
 
@@ -95,9 +106,10 @@ and saying so on every keystroke is noise. On open and on save, every rule runs.
 ## Troubleshooting
 
 **"The semlayer engine was not found on your PATH."**
-The extension runs the CLI; it has no engine of its own. `pipx install semlayer`,
-or set `semlayer.cliPath` to where yours lives. `semlayer: Show output` prints
-what was tried.
+The extension runs the CLI; it has no engine of its own. Press the install
+button in the panel, or run `uv tool install --python 3.13
+"semlayer[warehouses]"` yourself, or set `semlayer.cliPath` to where yours
+lives. `semlayer: Show output` prints what was tried.
 
 **No squiggles in a SQL file.**
 In order of likelihood: the file's language is not `sql` (bottom right of the
