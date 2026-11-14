@@ -53,6 +53,30 @@ def test_an_unsupported_uri_is_a_source_error_with_a_hint():
     assert e.value.hint and "duckdb" in e.value.hint
 
 
+def test_a_missing_duckdb_file_is_a_source_error_not_a_traceback(tmp_path):
+    """A SUPPORTED uri pointing at nothing, which is a different branch.
+
+    Every test here covered uris we refuse outright; `duckdb:` is accepted and
+    then handed to the driver, whose IOException escaped. Reported from the VS
+    Code extension, where the path came off our own `semlayer discover` list
+    and so was not even a typo -- the caller was simply in another directory.
+    """
+    from semlayer.pipeline import open_source_from_uri
+    with pytest.raises(SourceError) as e:
+        open_source_from_uri(f"duckdb:{tmp_path / 'nope.duckdb'}")
+    assert "nope.duckdb" in str(e.value)
+    assert e.value.hint and "looked for" in e.value.hint
+
+
+def test_a_relative_duckdb_path_says_what_it_resolved_against(tmp_path, monkeypatch):
+    """The absolute path alone does not explain a wrong-directory failure."""
+    monkeypatch.chdir(tmp_path)
+    from semlayer.pipeline import open_source_from_uri
+    with pytest.raises(SourceError) as e:
+        open_source_from_uri("duckdb:nope.duckdb")
+    assert str(tmp_path) in e.value.hint
+
+
 @pytest.mark.parametrize("uri", ["mysql://h/db", "", "not a uri", "s3://bucket"])
 def test_unsupported_uris_never_raise_a_bare_builtin(uri):
     from semlayer.pipeline import open_source_from_uri

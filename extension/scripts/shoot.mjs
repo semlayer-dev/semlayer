@@ -13,7 +13,7 @@
  * The VS Code theme variables are injected here because a webview gets them
  * from the host. Values are Dark Modern's.
  */
-import { mkdirSync, writeFileSync, existsSync, copyFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, existsSync, copyFileSync, readdirSync, unlinkSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import * as V from '../out/views.js';
 import * as F from '../test/fixtures.mjs';
@@ -53,12 +53,25 @@ const standalone = (html, width) => html
     <script>window.acquireVsCodeApi=()=>({postMessage(){}});</script>`);
 
 export const VIEWS = [
-  ...Object.entries(F.PANEL_STATES).map(([name, s]) => (
-    { name, width: 380, html: () => V.renderPanel(s) })),
-  { name: 'scope', width: 820, html: () => V.renderScope(F.PROBE, 'duckdb:messy_mart.duckdb', F.SETTINGS) },
-  { name: 'scope-deterministic', width: 820,
-    html: () => V.renderScope(F.PROBE, 'duckdb:messy_mart.duckdb', { ...F.SETTINGS, noLlm: true }) },
-  { name: 'settings', width: 820, html: () => V.renderSettings(F.SETTINGS, 'snowflake:analytics_prod') },
+  ...Object.keys(F.PANEL_STATES).map((name) => (
+    { name, width: 380, html: () => V.renderPanel(F.panelState(name)) })),
+  // Sidebar width, because that is where step one now lives.
+  { name: 'connect', width: 380, html: () => V.renderConnect(F.CONNECT) },
+  { name: 'connect-empty', width: 380, html: () => V.renderConnect(F.CONNECT_EMPTY) },
+  { name: 'connect-no-demo', width: 380, html: () => V.renderConnect(F.CONNECT_NO_DEMO) },
+  // Sidebar width: step two sits where step one did.
+  { name: 'scope', width: 380, html: () => V.renderScope(F.SCOPE) },
+  { name: 'scope-deterministic', width: 380,
+    html: () => V.renderScope({ ...F.SCOPE, settings: { ...F.SETTINGS, noLlm: true } }) },
+  { name: 'scope-running', width: 380,
+    html: () => V.renderScope({ ...F.SCOPE, running: true }) },
+  // The settings, open -- which is how "Rebuild with settings" arrives, and
+  // the only way the form itself is ever looked at.
+  // Tall, because the whole point of this one is the form below the fold.
+  { name: 'scope-settings', width: 380, height: 2200,
+    html: () => V.renderScope({ ...F.SCOPE, expanded: true }) },
+  { name: 'serve', width: 380, html: () => V.renderServe(F.SERVE) },
+  { name: 'serve-none', width: 380, html: () => V.renderServe(F.SERVE_NONE) },
   { name: 'drift', width: 900, html: () => V.renderDrift(F.DRIFT, 'messy_mart.yaml') },
   { name: 'grants-snowflake', width: 820,
     html: () => V.renderGrants('snowflake', F.GRANT_SNOWFLAKE) },
@@ -89,6 +102,13 @@ const toWin = (p) => p.replace(/^\/mnt\/([a-z])\//, (_, d) => `${d.toUpperCase()
 
 function main() {
   mkdirSync(OUT, { recursive: true });
+  // Drop output from views that no longer exist. `panel-walkthrough.png` and
+  // `settings.png` outlived the screens they showed by a week, sitting beside
+  // current ones with nothing to tell them apart.
+  const current = new Set(VIEWS.flatMap((v) => [`${v.name}.html`, `${v.name}.png`]));
+  for (const f of readdirSync(OUT)) {
+    if (!current.has(f)) { unlinkSync(`${OUT}${f}`); }
+  }
   const bin = PNG ? chrome() : null;
   if (PNG && !bin) { console.log('no Chrome found; writing HTML only'); }
 
@@ -110,7 +130,8 @@ function main() {
       if (win) { writeFileSync(src, html); }
       try {
         execFileSync(bin, ['--headless', '--disable-gpu', '--hide-scrollbars',
-          `--screenshot=${win ? toWin(png) : png}`, `--window-size=${v.width},900`,
+          `--screenshot=${win ? toWin(png) : png}`,
+          `--window-size=${v.width},${v.height ?? 900}`,
           '--virtual-time-budget=3000', win ? toWin(src) : src],
           { stdio: 'ignore', timeout: 60_000 });
         if (existsSync(png)) {

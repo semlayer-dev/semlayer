@@ -105,6 +105,25 @@ def parse(text: str) -> dict[str, str]:
     return out
 
 
+def home() -> Path:
+    """Where semlayer keeps per-machine state, honouring `SEMLAYER_HOME`.
+
+    Read on every call rather than captured at import, so a test can move it
+    without reloading the module.
+    """
+    return Path(os.environ.get("SEMLAYER_HOME", Path.home() / ".semlayer"))
+
+
+def env_path() -> Path:
+    """The `.env` file this module is about: `$SEMLAYER_HOME/.env`.
+
+    It lives here rather than in `session` because the provider needs it too
+    -- `SEMLAYER_MODEL` is read from the same file the API key is -- and
+    `session` pulls in the whole engine.
+    """
+    return home() / ".env"
+
+
 def read(path: str | Path) -> dict[str, str]:
     """Parse the `.env` file at `path`, or return nothing at all.
 

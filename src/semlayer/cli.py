@@ -38,22 +38,12 @@ def _add_stitch_parser(sub) -> None:
     p.add_argument("--query-workers", type=int, default=None, metavar="N")
 
 
-def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="semlayer", description="Semantic layer toolkit")
-    parser.add_argument("-v", "--verbose", action="store_true",
-                        help="Stage-by-stage progress logging")
-    sub = parser.add_subparsers(dest="command", required=True)
-
-    p = sub.add_parser("validate", help="Validate semantic layer document(s) against the spec")
-    p.add_argument("paths", nargs="+", help="YAML/JSON document paths")
-    p.add_argument("-q", "--quiet", action="store_true", help="Only print failures")
-
-    p = sub.add_parser("init", help="Generate minimal-grant setup script for a warehouse")
-    p.add_argument("warehouse", choices=["snowflake", "bigquery", "postgres"])
-    p.add_argument("--database", default="<your_database>")
-    p.add_argument("--project", default="<your_project>")
-    p.add_argument("--warehouse-name", default="<your_warehouse>")
-    p.add_argument("--schema", default="<your_schema>", help="Postgres: schema to grant on")
+def _add_infer_parser(sub) -> None:
+    """The `infer` flags, lifted out of `_build_parser` so that one stays readable."""
+    # Imported here so `--help` names the real default rather than a copy of
+    # it that can drift; the provider module is cheap (it imports `anthropic`
+    # only when a live call happens).
+    from semlayer.llm.provider import CHEAP_MODEL
 
     p = sub.add_parser("infer", help="Infer a semantic layer from a warehouse")
     p.add_argument("source",
@@ -73,6 +63,13 @@ def _build_parser() -> argparse.ArgumentParser:
                         "joined with _ when several, else the warehouse: database, project "
                         "or file stem). The output file is <name>.yaml unless -o is given.")
     p.add_argument("--no-llm", action="store_true", help="Deterministic dry-run (no LLM calls)")
+    p.add_argument("--model", metavar="ID", default=None,
+                   help="Model id for every call this run makes (default: "
+                        f"{CHEAP_MODEL}; SEMLAYER_MODEL in $SEMLAYER_HOME/.env is the "
+                        "same switch). A larger model writes better descriptions and "
+                        "costs more than the published ~$0.70/100 tables, which is "
+                        "measured on the default. The model is recorded in the "
+                        "document's generated_by.")
     p.add_argument("--no-sample-egress", action="store_true",
                    help="Never include cell values in LLM prompts")
     p.add_argument("--no-llm-cache", action="store_true",
@@ -119,6 +116,31 @@ def _build_parser() -> argparse.ArgumentParser:
                         "certified content is kept and disagreement is recorded as a "
                         "conflict; a column the warehouse no longer has becomes "
                         "`orphaned`, never deleted. Tables outside --only are untouched.")
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="semlayer", description="Semantic layer toolkit")
+    parser.add_argument("-v", "--verbose", action="store_true",
+                        help="Stage-by-stage progress logging")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p = sub.add_parser("validate", help="Validate semantic layer document(s) against the spec")
+    p.add_argument("paths", nargs="+", help="YAML/JSON document paths")
+    p.add_argument("-q", "--quiet", action="store_true", help="Only print failures")
+
+    p = sub.add_parser("init", help="Generate minimal-grant setup script for a warehouse")
+    p.add_argument("warehouse", choices=["snowflake", "bigquery", "postgres"])
+    p.add_argument("--database", default="<your_database>")
+    p.add_argument("--project", default="<your_project>")
+    p.add_argument("--warehouse-name", default="<your_warehouse>")
+    p.add_argument("--schema", default="<your_schema>", help="Postgres: schema to grant on")
+
+    _add_infer_parser(sub)
+
+    p = sub.add_parser("discover",
+                       help="List the warehouse connections visible from here")
+    p.add_argument("--json", action="store_true",
+                   help="machine-readable: one object per connection")
 
     p = sub.add_parser("demo",
                        help="Write a sample warehouse to try semlayer on")
@@ -231,6 +253,10 @@ def _add_maintain_parser(sub) -> None:
                         "like infer's, is the LLM when ANTHROPIC_API_KEY is set)")
     p.add_argument("--no-llm-cache", action="store_true",
                    help="Do not cache model responses on disk (same meaning as on infer)")
+    p.add_argument("--model", metavar="ID", default=None,
+                   help="Model id, as on infer. Re-inference writes descriptions next to "
+                        "ones an earlier run wrote, so the model that built the layer is "
+                        "usually the one to keep using")
     p.add_argument("--llm-workers", type=int, default=4, metavar="N")
     p.add_argument("--query-workers", type=int, default=None, metavar="N")
     p.add_argument("--manifest", help="dbt manifest.json, as on infer")
@@ -264,7 +290,8 @@ def _cmd_maintain(args: argparse.Namespace) -> int:
         llm = None
         if with_llm:
             from semlayer.llm.provider import AnthropicProvider
-            llm = AnthropicProvider(cache=not args.no_llm_cache, repo_cache=False)
+            llm = AnthropicProvider(model=args.model, cache=not args.no_llm_cache,
+                                    repo_cache=False)
         lineage = None
         if args.manifest:
             from semlayer.lineage import load_dbt_manifest
@@ -356,6 +383,48 @@ def _cmd_validate(args: argparse.Namespace) -> int:
     return 1 if failed else 0
 
 
+def _cmd_discover(args: argparse.Namespace) -> int:
+    """What can this machine already reach?
+
+    `session.discover` has answered this since the MCP server shipped, and
+    nothing on the command line exposed it -- so the one caller who most needs
+    it, a user staring at an empty "which warehouse?" box, had to already know
+    the answer to ask the question. Reading a dbt profile or a connections.toml
+    is work we can do for them and were already doing for agents.
+
+    Exits 0 with an empty list when there is nothing: finding no warehouse is
+    an answer, not a failure, and a non-zero code here would make a caller
+    treat "you have none configured" as a broken install.
+    """
+    import json as _json
+
+    from semlayer import session
+
+    found = session.discover()
+    if args.json:
+        print(_json.dumps(found, indent=1))
+        return 0
+
+    if not found:
+        print("No warehouse connections found.")
+        print()
+        print("We looked at the environment, dbt profiles, a Snowflake")
+        print("connections.toml and DuckDB files here. To try semlayer without")
+        print("one, write a sample warehouse with `semlayer demo`.")
+        return 0
+
+    width = max(len(e["uri"]) for e in found)
+    for e in found:
+        mark = " " if e.get("supported") else "!"
+        print(f"{mark} {e['uri']:<{width}}  {e.get('source', '')}")
+        if e.get("note"):
+            print(f"  {'':<{width}}  {e['note']}")
+    if any(not e.get("supported") for e in found):
+        print()
+        print("! marks a connection we cannot open yet.")
+    return 0
+
+
 def _cmd_demo(args: argparse.Namespace) -> int:
     """Write a warehouse for someone who has none to hand.
 
@@ -398,7 +467,8 @@ def _cmd_infer(args: argparse.Namespace) -> int:
     if not args.no_llm:
         from semlayer.llm.provider import AnthropicProvider
 
-        llm = AnthropicProvider(cache=not args.no_llm_cache, repo_cache=False)
+        llm = AnthropicProvider(model=args.model, cache=not args.no_llm_cache,
+                                repo_cache=False)
     state = None
     if args.state:
         from semlayer.incremental import LocalStateStore
@@ -836,7 +906,18 @@ def _cmd_drift(args: argparse.Namespace) -> int:
     events = drift_mod.diff_snapshots(drift_mod.baseline(doc), drift_mod.snapshot(src))
     events += drift_mod.semantic_drift(src, doc)
     if not events:
-        print("no drift detected")
+        # The commonest outcome, and it must still be JSON when JSON was asked
+        # for. It printed the prose line either way, so every agent and CI step
+        # parsing `--json` had to special-case one sentence -- and the shape it
+        # had to fall back to was not written down anywhere.
+        if args.json:
+            import json
+
+            print(json.dumps({"events": [], "orphaned": [], "needs_inference": [],
+                              "affected": [], "broken_cqs": [], "demoted": [],
+                              "retable": []}, indent=1))
+        else:
+            print("no drift detected")
         return 0
     cs = drift_mod.apply_drift(doc, events)
     if args.cqs and args.source.startswith("duckdb:"):
@@ -1049,6 +1130,7 @@ _HANDLERS = {
     "validate": _cmd_validate,
     "stitch": _cmd_stitch,
     "demo": _cmd_demo,
+    "discover": _cmd_discover,
     "init": _cmd_init,
     "infer": _cmd_infer,
     "maintain": _cmd_maintain,

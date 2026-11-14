@@ -47,6 +47,7 @@ export function viaUvx(): boolean { return cliArgv()[0] === UVX_ARGV[0]; }
 
 export interface RunOptions {
   stdin?: string;
+  /** Overrides the workspace folder. Rarely needed -- see `run`. */
   cwd?: string;
   /** Kills the process if it outlives this. Lint is sub-second; infer is minutes. */
   timeoutMs?: number;
@@ -59,11 +60,28 @@ export interface RunResult {
   stderr: string;
 }
 
+/**
+ * The folder the user opened, which is what every relative path in this
+ * extension means.
+ *
+ * Without it, engine calls inherit the extension HOST's directory -- which is
+ * wherever VS Code was launched from and never what the user meant. It is
+ * defaulted here rather than passed per call because the bug class is
+ * invisible at the call site: `semlayer discover` emits relative URIs for
+ * DuckDB files it found in the working directory ("duckdb:messy_mart.duckdb"),
+ * so a connection the user picked off our own list then failed to open. That
+ * was fixed once, in `discover` alone, which left probe, infer, drift, review
+ * and init holding the same landmine.
+ */
+function workspaceCwd(): string | undefined {
+  return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+}
+
 export function run(args: string[], opts: RunOptions = {}): Promise<RunResult> {
   return new Promise((resolve, reject) => {
     const argv = cliArgv();
     const child = spawn(argv[0], [...argv.slice(1), ...args], {
-      cwd: opts.cwd,
+      cwd: opts.cwd ?? workspaceCwd(),
       env: process.env,
       shell: false,          // never a shell: arguments are paths the user typed
     });

@@ -48,6 +48,28 @@ export function countTables(text: string): number | null {
   return indent === null ? null : n;
 }
 
+/**
+ * The warehouse this document was inferred from.
+ *
+ * It is written into every layer as `warehouse:`, and reading it back is what
+ * lets step two work in a window that has not connected to anything yet. The
+ * alternative was a variable held in memory, which meant the Create step did
+ * nothing useful after a reload -- the commonest state of all, since a reload
+ * is how the extension gets installed.
+ *
+ * Indent-limited the same way `layerName` is, so a column named `warehouse`
+ * deeper in the document cannot be mistaken for it.
+ */
+export function layerWarehouse(text: string): string | null {
+  for (const line of text.split('\n')) {
+    const m = /^(\s*)warehouse\s*:\s*(\S.*)$/.exec(line);
+    if (m && m[1].length <= 2) {
+      return m[2].trim().replace(/^['"]|['"]$/g, '');
+    }
+  }
+  return null;
+}
+
 /** The document's own `name:`, which is the identity other layers reference. */
 export function layerName(text: string): string | null {
   for (const line of text.split('\n')) {

@@ -8,7 +8,7 @@
  */
 import * as vscode from 'vscode';
 import { Linter } from './diagnostics';
-import { Panel, readDrift, invalidateDrift } from './panel';
+import { Panel, readDrift, invalidateDrift, invalidateFindings } from './panel';
 import * as flows from './flows';
 import { installers as engineInstallers } from './engine';
 import { settingsToArgs } from './views';
@@ -19,10 +19,13 @@ import * as mcp from './mcp';
 
 let status: vscode.StatusBarItem;
 
+/** How long the "running" state stays up at minimum. See its one use. */
+const MIN_RUNNING_MS = 900;
+
 export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   const out = vscode.window.createOutputChannel('semlayer');
   const linter = new Linter(out);
-  const panel = new Panel(ctx);
+  const panel = new Panel(ctx, out);
 
   status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 95);
   status.command = 'semlayer.selectLayer';
@@ -69,6 +72,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   const watcher = vscode.workspace.createFileSystemWatcher('**/*.{yaml,yml}');
   const onLayerChange = () => {
     layers.invalidate();
+    // Verdicts are written into the document, so the queue shrinks exactly
+    // when the file changes. This is also what makes the badge fall after a
+    // review session instead of sitting on a stale number for five minutes.
+    invalidateFindings();
     vscode.workspace.textDocuments.forEach(lintIfSql);
     void refresh();
   };
@@ -77,9 +84,12 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     watcher.onDidDelete(onLayerChange));
 
   // --- commands ----------------------------------------------------------
-  const cmd = (id: string, fn: () => Promise<void> | void) =>
-    ctx.subscriptions.push(vscode.commands.registerCommand(id, async () => {
-      try { await fn(); } catch (e) { report(e, out); }
+  // The argument is passed through because a command invoked from code can
+  // carry one (`semlayer.createStep` takes { settings: true }); a click from
+  // a menu or the checklist passes nothing, which is the `undefined` case.
+  const cmd = <A>(id: string, fn: (arg?: A) => Promise<void> | void) =>
+    ctx.subscriptions.push(vscode.commands.registerCommand(id, async (arg?: A) => {
+      try { await fn(arg); } catch (e) { report(e, out); }
     }));
 
   cmd('semlayer.showOutput', () => out.show());
@@ -161,14 +171,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       });
   });
 
-  cmd('semlayer.createLayer', async () => {
-    const source = await askSource();
-    if (!source) { return; }
+  /** Probe a chosen warehouse, then show the bill. The tail of every route. */
+  const toScope = async (source: string, expanded = false) => {
     lastSource = source;
-
-    // Probe BEFORE inferring. This is the screen that shows the bill: at 36
-    // tables it is a formality, at 15,000 it is the user's money. A warehouse
-    // probe cannot read is reported here rather than after a long failed run.
+    panel.noteSource(source);
     const p = await vscode.window.withProgress(
       { location: vscode.ProgressLocation.Notification, title: `Reading ${source}` },
       () => flows.probe(source, out));
@@ -182,18 +188,148 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         });
       return;
     }
-    flows.showScope(p, source, () => void infer(source, out, refresh));
+    await panel.showScope(p, source, expanded);
+  };
+
+  /**
+   * The warehouse to act on.
+   *
+   * `lastSource` only knows what THIS session picked and a reload clears it,
+   * so it falls back to the one the layer records being built from. Every
+   * command that needs a warehouse goes through here; the ones that read
+   * `lastSource` directly all failed the same way on a fresh window.
+   */
+  const currentSource = async (): Promise<string | undefined> =>
+    lastSource ?? (await layers.active())?.warehouse ?? undefined;
+
+  /** Lint against a layer the user picked, and settle into the resting state. */
+  const useLayerFile = async (fsPath: string) => {
+    await vscode.workspace.getConfiguration('semlayer')
+      .update('layerPath', fsPath, vscode.ConfigurationTarget.Workspace);
+    layers.invalidate();
+    await refresh();
+  };
+
+  // Step one. With no layer the sidebar is already showing it, so this is the
+  // way BACK to it -- from the sample to a real warehouse, say.
+  cmd('semlayer.createLayer', async () => {
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Window, title: 'Looking for warehouses' },
+      () => panel.showConnect());
   });
 
+  // Step two from the checklist. It needs a warehouse to show a bill for.
+  //
+  // `lastSource` only knows what THIS session picked, and a reload clears it
+  // -- which is the state most people are in, since reloading is how the
+  // extension gets installed. So fall back to the warehouse the layer records
+  // having been built from. Only with neither does this send you to step one.
+  cmd('semlayer.createStep', async (opts?: { settings?: boolean }) => {
+    const source = await currentSource();
+    if (!source) {
+      await vscode.commands.executeCommand('semlayer.createLayer');
+      return;
+    }
+    await toScope(source, opts?.settings === true);
+  });
+
+  // Day 2. Not a step -- the place you come back to once the three are done.
+  cmd('semlayer.home', () => panel.goHome());
+
+  // Step three.
+  cmd('semlayer.serve', async () => {
+    if (!(await layers.active())) {
+      await vscode.commands.executeCommand('semlayer.createLayer');
+      return;
+    }
+    await panel.showServe();
+  });
+
+  // The connect screen posts its one decision here. The panel renders step
+  // one; acting on it belongs where probing and spending already live.
+  panel.onMessage = (m) => void (async () => {
+    if (m.type === 'cancel') { await panel.leaveConnect(); return; }
+    if (m.type === 'sample') {
+      await panel.leaveConnect();
+      await vscode.commands.executeCommand('semlayer.trySample');
+      return;
+    }
+    if (m.type === 'layer' && m.source) {
+      await panel.leaveConnect();
+      await useLayerFile(m.source);
+      return;
+    }
+    if (m.type === 'browse') {
+      const picked = await vscode.window.showOpenDialog({
+        title: 'Open a semantic layer', canSelectMany: false,
+        filters: { 'Semantic layer': ['yaml', 'yml'] } });
+      // Cancelling the dialog leaves the user on the list, not nowhere.
+      if (picked?.[0]) {
+        await panel.leaveConnect();
+        await useLayerFile(picked[0].fsPath);
+      }
+      return;
+    }
+    if (m.type === 'use' && m.source) {
+      await panel.leaveConnect();
+      await toScope(m.source);
+      return;
+    }
+    if (m.type === 'home') { await panel.goHome(); return; }
+    // --- step three -----------------------------------------------------
+    if (m.type === 'client' && m.source) {
+      const layer = await layers.active();
+      const client = mcp.clients().find((c) => c.label === m.source);
+      if (layer && client) {
+        await mcp.configure(client, layer.uri);
+        await refresh();
+        vscode.window.showInformationMessage(
+          `${client.label} now serves ${layer.name}. Restart it to pick the server up.`);
+      }
+      return;
+    }
+    if (m.type === 'copy' && m.source) {
+      await vscode.env.clipboard.writeText(m.source);
+      vscode.window.showInformationMessage('Copied.');
+      return;
+    }
+    // --- step two -------------------------------------------------------
+    if (m.type === 'settings' && m.state) { flows.setSettings(m.state); return; }
+    if (m.type === 'back') { await panel.leaveScope(); await panel.showConnect(); return; }
+    if (m.type === 'create' && lastSource) {
+      // The screen stays up, showing the run. Leaving first dropped the
+      // sidebar back to step one, so Create looked like it had undone itself.
+      await panel.setRunning(true);
+      const started = Date.now();
+      try {
+        await infer(lastSource, out, refresh);
+      } finally {
+        // A floor on how briefly the running state can exist. Deterministic
+        // inference over the 36-table sample finishes in about four seconds,
+        // and the webview has to paint before it can be seen at all -- so the
+        // bar was correct and invisible. This does not fake progress or delay
+        // the result; it stops a real state from flashing past unread.
+        const shown = Date.now() - started;
+        if (shown < MIN_RUNNING_MS) {
+          await new Promise((r) => setTimeout(r, MIN_RUNNING_MS - shown));
+        }
+        await panel.leaveScope();
+      }
+    }
+  })();
+
+  // "Rebuild with settings" IS step two: the Create screen carries the bill
+  // and the same settings form, so a second screen for them would be the
+  // duplicate shape this extension keeps being bitten by. It opened one, and
+  // it read `lastSource`, which a reload clears -- so on day 2, the day it is
+  // for, it asked you to type the warehouse in and did nothing if you did not.
   cmd('semlayer.settings', async () => {
-    const source = lastSource ?? await askSource();
-    if (!source) { return; }
-    lastSource = source;
-    flows.showSettings(source, () => void infer(source, out, refresh));
+    // Expanded, because the settings are what was asked for by name.
+    await vscode.commands.executeCommand('semlayer.createStep', { settings: true });
   });
 
   cmd('semlayer.grants', async () => {
-    const source = lastSource ?? await askSource();
+    const source = await currentSource() ?? await askSource();
     if (!source) { return; }
     await flows.showGrants(source, out);
   });
@@ -280,11 +416,12 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     }
     // Straight into the thing it exists for. A sample you then have to work
     // out what to do with is only half an answer.
-    const p = await vscode.window.withProgress(
-      { location: vscode.ProgressLocation.Notification, title: 'Reading the sample' },
-      () => flows.probe(`duckdb:${target.fsPath}`, out));
-    if (p) { flows.showScope(p, `duckdb:${target.fsPath}`,
-                             () => void infer(`duckdb:${target.fsPath}`, out, refresh)); }
+    //
+    // Through `toScope` rather than probing here: this path had its own copy,
+    // which meant it skipped `panel.noteSource` and the checklist never ticked
+    // step one for the sample -- the one route a first-time user is most
+    // likely to take.
+    await toScope(`duckdb:${target.fsPath}`);
   });
 
   cmd('semlayer.review', async () => {
@@ -396,11 +533,13 @@ async function inferInto(source: string, doc: vscode.Uri, tables: string[],
     cancellable: true,
   }, async (_p, token) => {
     const { code, stdout, stderr } = await run(
+      // No `-o`: `--into` already says where the result goes.
       ['infer', source, '--only', tables.join(','), '--into', doc.fsPath,
-       ...settingsToArgs(flows.currentSettings())],
+       ...settingsToArgs(flows.currentSettings(), { withOut: false })],
       { cwd: vscode.Uri.joinPath(doc, '..').fsPath, token });
     out.appendLine(stdout || stderr);
     invalidateDrift();
+    invalidateFindings();
     layers.invalidate();
     await refresh();
     if (code !== 0) {
@@ -424,7 +563,10 @@ async function infer(source: string, out: vscode.OutputChannel,
       ['infer', source, ...settingsToArgs(flows.currentSettings())], { cwd: root, token });
     out.appendLine(stdout || stderr);
     if (code === 0) {
-      layers.invalidate();
+      // Wait for the file to appear in VS Code's index before redrawing: the
+      // engine has just written it from outside the editor, and a refresh
+      // that lands first finds no layer and shows "connect a warehouse".
+      await layers.waitForLayer();
       await refresh();
       vscode.window.showInformationMessage('Semantic layer written.', 'Show output')
         .then((a) => { if (a) { out.show(); } });

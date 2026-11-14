@@ -2,6 +2,59 @@
 
 ## Unreleased
 
+## 0.7.0b4
+
+### `semlayer discover`: what this machine can already reach
+
+The first question a new user faces is "which warehouse?", and until now the
+only answer the CLI could give was a blank prompt. `semlayer discover` lists
+the connections visible from here — DuckDB files in the working directory,
+`connections.toml` profiles, dbt targets, environment variables — each with
+where it was found, whether it is usable, and what is missing when it is not.
+`--json` for agents and editors.
+
+The logic is not new: `session.discover()` has backed the MCP tool
+`discover_connections` since the MCP server shipped. It had no CLI surface,
+which meant a user at a terminal and an agent over MCP were answering the
+same question with different amounts of help.
+
+A half-configured connection is the interesting row. An account set in
+`SNOWFLAKE_ACCOUNT` with nothing else is reported as found-but-unusable,
+naming the variables still needed, rather than being silently omitted or
+offered as if it would work.
+
+### Choosing a model: `--model` and `SEMLAYER_MODEL`
+
+The model was a constant in the engine with no flag and no environment
+override. `semlayer infer --model <id>` and `semlayer maintain --model <id>`
+now set it, as does `SEMLAYER_MODEL` in `$SEMLAYER_HOME/.env` — the same file
+the API key can live in, and the only channel an MCP server launched by a
+desktop client reliably sees.
+
+The default does not move, and that is deliberate: the published cost model
+(~$0.70 per 100 tables) and every committed cassette are measured on the cheap
+tier. A different model is a different cassette key, so naming one means live
+calls rather than replay — the cassette holds what one model said, and
+replaying it for another would report a run that never happened. The model
+that ran is recorded in the document's `generated_by.model`, as before.
+
+### `drift --json` is always JSON
+
+When nothing had drifted — the commonest outcome, and the one a scheduled job
+hits every night — it printed the sentence `no drift detected` whether or not
+`--json` was passed. Every agent and CI step consuming the flag had to
+special-case one line of prose, against a fallback shape that was written down
+nowhere. It now emits an empty changeset carrying all seven keys the non-empty
+one does.
+
+### A missing DuckDB file is an error message, not a traceback
+
+`semlayer infer duckdb:nope.duckdb` raised a raw `IOException` from the
+driver. It now raises a `SourceError` naming the path it resolved, the working
+directory it resolved against, and what DuckDB said — because the usual cause
+is a relative path interpreted from somewhere other than where the user
+thought, and the resolved path is the one fact that makes that obvious.
+
 ## 0.7.0b3
 
 ### `semlayer demo`: a warehouse for people who do not have one

@@ -21,6 +21,13 @@ semlayer mcp layer.yaml     # then add to your MCP client config
 Add `ANTHROPIC_API_KEY` to your environment and drop `--no-llm` for full
 inference (descriptions, decode validation, type escalation).
 
+Inference runs on the cheap tier by default, which is what the published cost
+(~$0.70/100 tables) is measured on. To use another model, pass `--model <id>`
+or put `SEMLAYER_MODEL=<id>` in `$SEMLAYER_HOME/.env` — the same file the API
+key can live in, and the only one an MCP server started by a desktop client
+will see. The model that ran is recorded in the document's
+`generated_by.model`.
+
 ## Snowflake
 
 ### As yourself, with no setup
