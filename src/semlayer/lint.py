@@ -534,6 +534,29 @@ def lint_sql(doc: dict, sql: str, dialect: str = "duckdb") -> dict:
     return {"ok": errors == 0, "findings": findings, "errors": errors, "warnings": warnings}
 
 
+def without_positions(result: dict) -> dict:
+    """The same findings, with the position fields removed.
+
+    For the payloads a MODEL sees. Positions are for a consumer holding the
+    source text -- an editor drawing a squiggle, a CI job annotating a diff
+    -- and an agent that called `check_sql` with a string it composed gains
+    little from them.
+
+    The reason they are removed rather than simply not useful: every
+    agent-facing payload is pinned by a recorded cassette, so adding four
+    keys to it invalidates every recorded answer and turns a replay suite
+    red. That is a real cost (live calls, paid, and a partial re-record
+    leaves half the published benchmark rows stale) against a marginal gain.
+    Revisit when something is being re-recorded anyway.
+    """
+    stripped = dict(result)
+    stripped["findings"] = [
+        {k: v for k, v in f.items() if k not in _POSITION_KEYS}
+        for f in result.get("findings", [])
+    ]
+    return stripped
+
+
 def render_findings(result: dict, file: str = "") -> str:
     """Plain-text rendering used by the CLI and by consumers feeding findings back to an agent."""
     if not result["findings"]:

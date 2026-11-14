@@ -936,8 +936,11 @@ def build_server(layer: Session | dict):
         SCD2 joins without a validity window. Fix every error and warning
         (each finding carries a fix hint), then re-check.
         """
-        from semlayer.lint import lint_sql
-        return _answer(session, lambda doc: lint_sql(doc, sql, dialect=dialect))
+        from semlayer.lint import lint_sql, without_positions
+        # Without positions: an agent passed us a string it already holds, and
+        # this payload's text is pinned by recorded cassettes.
+        return _answer(session, lambda doc: without_positions(
+            lint_sql(doc, sql, dialect=dialect)))
 
     @srv.tool()
     def compile_metric(name: str, group_by: str = "", time_grain: str = "",  # noqa: PLR0913, PLR0917 — tool schema is intentionally flat
