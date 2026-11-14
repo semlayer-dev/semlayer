@@ -1,0 +1,44 @@
+{
+  "manifest_version": "0.4",
+  "name": "semlayer",
+  "version": "0.7.0b6",
+  "description": "Infers a semantic layer from your data warehouse and serves it to agents over MCP.",
+  "author": {
+    "name": "semlayer",
+    "url": "https://semlayer.dev"
+  },
+  "homepage": "https://semlayer.dev",
+  "icon": "icon.png",
+  "server": {
+    "type": "uv",
+    "entry_point": "src/server.py",
+    "mcp_config": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "${__dirname}",
+        "src/server.py"
+      ],
+      "env": {
+        "SEMLAYER_LAYER": "${user_config.layer}",
+        "ANTHROPIC_API_KEY": "${user_config.anthropic_api_key}"
+      }
+    }
+  },
+  "user_config": {
+    "layer": {
+      "type": "file",
+      "title": "Semantic layer file",
+      "description": "A layer you have already built. Leave empty on a first run: the server will report the warehouses it can see and offer to build one.",
+      "required": false
+    },
+    "anthropic_api_key": {
+      "type": "string",
+      "title": "Anthropic API key",
+      "description": "Only needed to BUILD a layer, and only for the descriptions. Inference runs without it on statistics alone, and querying an existing layer never needs it.",
+      "sensitive": true,
+      "required": false
+    }
+  }
+}

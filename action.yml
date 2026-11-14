@@ -1,0 +1,153 @@
+# semlayer as a GitHub Action.
+#
+# Two things are worth doing in CI, and they are the two the engine already
+# exits nonzero for: lint the SQL in a pull request against the layer, and
+# fail when the warehouse has drifted away from it.
+#
+# `maintain` is deliberately NOT here. It needs a standing branch, a pull
+# request body and repository write; that is a workflow, and the one to copy
+# is examples/maintain/semlayer-maintain.yml.
+#
+# Every input reaches bash through `env:`, never through `${{ }}` inside a
+# `run:` block. Interpolating an input into the script TEXT means a branch
+# name or a filename containing shell syntax is executed, which is the
+# standard injection vector for actions -- and it is how the first draft of
+# this file ran `source` as a command from inside an error message.
+name: semlayer
+description: Check SQL against a semantic layer, or fail when the warehouse drifts.
+branding:
+  icon: database
+  color: blue
+
+inputs:
+  mode:
+    description: 'lint (check SQL, annotate the diff) or drift (fail when the warehouse moved)'
+    required: true
+  layer:
+    description: 'Path to the semantic layer YAML'
+    required: true
+  files:
+    description: 'lint: which SQL to check. A shell glob, expanded by the runner.'
+    required: false
+    default: '**/*.sql'
+  dialect:
+    description: 'lint: the SQL dialect to parse as'
+    required: false
+    default: duckdb
+  source:
+    description: 'drift: the warehouse to compare against, e.g. snowflake:prod'
+    required: false
+    default: ''
+  version:
+    description: >
+      semlayer version to install. Pin it: an action that tracks latest turns
+      a green pipeline red on someone else's release day.
+    required: false
+    default: ''
+  fail-on:
+    description: 'lint: error | warning | never'
+    required: false
+    default: error
+
+outputs:
+  findings:
+    description: 'lint: the JSON findings, as produced by `semlayer lint --json`'
+    value: ${{ steps.lint.outputs.findings }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install semlayer
+      shell: bash
+      env:
+        MODE: ${{ inputs.mode }}
+        VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        # The warehouse drivers are a minute of install and `lint` never
+        # opens a warehouse -- it reads the layer and parses SQL. So the
+        # common case, linting a pull request, stays fast.
+        # An engine the workflow already installed wins, unless a version
+        # was pinned. That makes this composable with a job that installs
+        # from a checkout -- which is how our own self-test exercises the
+        # code under review rather than the last release.
+        if [ -z "$VERSION" ] && command -v semlayer > /dev/null 2>&1; then
+          echo "using the semlayer already on PATH: $(command -v semlayer)"
+        else
+          pkg="semlayer"
+          if [ "$MODE" = "drift" ]; then pkg="semlayer[warehouses]"; fi
+          if [ -n "$VERSION" ]; then pkg="${pkg}==${VERSION}"; fi
+          python -m pip install --quiet --disable-pip-version-check "$pkg"
+        fi
+        semlayer --help > /dev/null
+
+    - name: Lint
+      id: lint
+      if: ${{ inputs.mode == 'lint' }}
+      shell: bash
+      env:
+        LAYER: ${{ inputs.layer }}
+        FILES: ${{ inputs.files }}
+        DIALECT: ${{ inputs.dialect }}
+        FAIL_ON: ${{ inputs.fail-on }}
+        ANNOTATE: ${{ github.action_path }}/action/annotate.py
+      run: |
+        set -uo pipefail
+        shopt -s globstar nullglob
+        # Unquoted ON PURPOSE: the input is a glob and has to expand. It is a
+        # variable rather than interpolated text, so nothing in it is parsed
+        # as shell.
+        # shellcheck disable=SC2206
+        files=( $FILES )
+        if [ ${#files[@]} -eq 0 ]; then
+          echo "no files matched $FILES; nothing to lint"
+          printf 'findings=[]\n' >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        echo "linting ${#files[@]} file(s) against $LAYER"
+
+        : > /tmp/semlayer-findings.json
+        rc=0
+        for f in "${files[@]}"; do
+          # One file per call: positions are relative to the text the linter
+          # was given, and an annotation has to name one file.
+          out=$(semlayer lint "$LAYER" "$f" --json --dialect "$DIALECT") || true
+          printf '%s' "$out" \
+            | python "$ANNOTATE" --fail-on "$FAIL_ON" \
+                --summary "${GITHUB_STEP_SUMMARY:-/dev/null}" || rc=$?
+          printf '%s\n' "$out" >> /tmp/semlayer-findings.json
+        done
+
+        {
+          echo 'findings<<SEMLAYER_EOF'
+          cat /tmp/semlayer-findings.json
+          echo 'SEMLAYER_EOF'
+        } >> "$GITHUB_OUTPUT"
+        exit $rc
+
+    - name: Drift
+      if: ${{ inputs.mode == 'drift' }}
+      shell: bash
+      env:
+        LAYER: ${{ inputs.layer }}
+        SOURCE: ${{ inputs.source }}
+      run: |
+        set -uo pipefail
+        if [ -z "$SOURCE" ]; then
+          echo '::error::drift needs the `source` input: the warehouse to compare against'
+          exit 2
+        fi
+        # `drift` exits 1 when it finds drift, which IS the gate. 0 means the
+        # layer still describes the warehouse.
+        semlayer drift "$LAYER" "$SOURCE" | tee /tmp/drift.txt
+        rc=${PIPESTATUS[0]}
+        if [ "$rc" = "1" ]; then
+          echo '::error title=semlayer drift::the warehouse has moved away from the layer'
+          {
+            echo '### semlayer: the warehouse has drifted'
+            echo '```'
+            cat /tmp/drift.txt
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+        fi
+        exit $rc

@@ -47,6 +47,73 @@ class Finding:
     table: str | None = None
     column: str | None = None
     fix: str | None = None
+    #: Where in the SQL, 1-based line and column, with byte offsets into the
+    #: statement. None when the finding is about the statement as a whole
+    #: (a parse error) rather than about something in it.
+    #:
+    #: These come from sqlglot, which records them on `Identifier` nodes
+    #: during parsing. Nothing here reconstructs a position by searching the
+    #: text: an editor doing that is approximating, and the extension's
+    #: README had to admit its underlines were "close, not exact".
+    line: int | None = None
+    col: int | None = None
+    start: int | None = None
+    end: int | None = None
+
+
+#: sqlglot records positions on the Identifier, not on the Column or Table
+#: that owns it, so anchoring means walking down to the name.
+_POSITION_KEYS = ("line", "col", "start", "end")
+
+
+def _pos(node: exp.Expression | None) -> dict[str, int]:
+    """Line, column and offsets for `node`, or {} when it carries none.
+
+    Prefers the node's own position, then its `this` (a Column's or Table's
+    Identifier), then the first descendant that has one -- which is what
+    makes a compound reference like `h.tot_amt` point at `tot_amt` rather
+    than at the alias.
+    """
+    if node is None:
+        return {}
+    for candidate in (node, node.args.get("this")):
+        if isinstance(candidate, exp.Expression):
+            found = {k: candidate.meta[k] for k in _POSITION_KEYS if k in candidate.meta}
+            if found:
+                return _start_column(found)
+    for descendant in node.walk():
+        found = {k: descendant.meta[k] for k in _POSITION_KEYS if k in descendant.meta}
+        if found:
+            return _start_column(found)
+    return {}
+
+
+def _start_column(pos: dict[str, int]) -> dict[str, int]:
+    """Report where the name BEGINS, which is not what sqlglot stores.
+
+    sqlglot's `col` is the 1-based column of the token's LAST character --
+    `tot_amt` on `SUM(h.tot_amt)` is col 20, where it ends, not 14 where it
+    starts. Every consumer of a position wants the start: an editor opens a
+    squiggle there and GitHub puts its marker there. The offsets make the
+    conversion exact rather than a guess about the name's length.
+    """
+    out = dict(pos)
+    if all(k in pos for k in ("col", "start", "end")):
+        out["col"] = pos["col"] - (pos["end"] - pos["start"])
+    return out
+
+
+def _table_node(scope: Scope, name: str) -> exp.Table | None:
+    """The Table node a finding about `name` should point at.
+
+    Some rules know only the physical table name -- they reached it through
+    an alias map -- so the node has to be found again to anchor the finding.
+    """
+    lowered = name.lower()
+    for table in scope.expression.find_all(exp.Table):
+        if table.name.lower() == lowered:
+            return table
+    return None
 
 
 class _Layer:
@@ -173,25 +240,26 @@ class _Linter:
     # ---------------------------------------------------------- per block
     def block(self, scope: Scope) -> None:
         phys = _physical(scope, self.L)
-        self._tables(phys)
+        self._tables(scope, phys)
         self._columns(scope, phys)
         self._required_filters(scope, phys)
         self._fanout(scope, phys)
         self._scd2(scope, phys)
 
-    def _tables(self, phys: dict[str, str]) -> None:
+    def _tables(self, scope: Scope, phys: dict[str, str]) -> None:
         for name in set(phys.values()):
+            at = _table_node(scope, name)
             t = self.L.tables.get(name)
             if t is None:
                 self._add(Finding("unknown_table", "error",
-                                             f"table {name} is not in the semantic layer", name))
+                                  f"table {name} is not in the semantic layer", name), at)
             elif t.get("lifecycle") in ("deprecated", "orphaned"):
                 rep = t.get("deprecation", {}).get("replacement")
                 self._add(Finding(
                     "deprecated_table", "error",
                     f"{name} is {t['lifecycle']}"
                     + (f"; use {rep} instead" if rep else ""),
-                    name, fix=f"rewrite the query against {rep}" if rep else None))
+                    name, fix=f"rewrite the query against {rep}" if rep else None), at)
 
     def _resolve_column(self, col: exp.Column, scope: Scope, phys: dict[str, str]) -> str | None:
         """Physical table owning this column reference, or None when unresolved."""
@@ -200,7 +268,16 @@ class _Linter:
         owners = [t for t in set(phys.values()) if col.name.lower() in self.L.columns.get(t, {})]
         return owners[0] if owners else None
 
-    def _add(self, f: Finding) -> None:
+    def _add(self, f: Finding, at: exp.Expression | None = None) -> None:
+        """Record a finding, anchored at `at` when the node is known.
+
+        The anchor is applied here rather than at every construction site so
+        that adding a rule cannot forget it: a rule that knows which node it
+        is complaining about passes it, and one that genuinely does not
+        (a parse failure) passes nothing and reports no position.
+        """
+        for field, value in _pos(at).items():
+            setattr(f, field, value)
         key = (f.rule, f.table, f.column)
         if key not in self._seen:
             self._seen.add(key)
@@ -226,7 +303,7 @@ class _Linter:
             if outs and name not in outs and not src.expression.is_star:
                 self._add(Finding("unknown_column", "error",
                                   f"{col.table}.{col.name}: {col.table} does not output {col.name}",
-                                  col.table, col.name))
+                                  col.table, col.name), col)
             return
         table = phys.get(alias)
         if table is None or table not in self.L.columns:
@@ -234,7 +311,7 @@ class _Linter:
         if name not in self.L.columns[table]:
             cols = ", ".join(list(self.L.columns[table])[:12])
             self._add(Finding("unknown_column", "error", f"{table}.{col.name} does not exist",
-                              table, col.name, fix=f"columns of {table}: {cols}"))
+                              table, col.name, fix=f"columns of {table}: {cols}"), col)
 
     def _unqualified_column(self, col: exp.Column, scope: Scope, phys: dict[str, str]) -> None:
         name = col.name.lower()
@@ -249,11 +326,11 @@ class _Linter:
                 f"resolves to the outer query's {outer[0]}.{col.name}, which makes this "
                 f"subquery match every row",
                 outer[0], col.name,
-                fix=f"qualify the column or join {outer[0]} inside the subquery"))
+                fix=f"qualify the column or join {outer[0]} inside the subquery"), col)
         else:
             self._add(Finding("unknown_column", "error",
                               f"{col.name} is not a column of {', '.join(sorted(here))}",
-                              None, col.name))
+                              None, col.name), col)
 
     def _required_filters(self, scope: Scope, phys: dict[str, str]) -> None:
         preds = [_bare(p, self.L.dialect) for p in _conjuncts(scope)]
@@ -288,7 +365,8 @@ class _Linter:
                        else " for all queries")
                     + (f" — {f['reason']}" if f.get("reason") else "")
                     + ("; the query filters on that column differently" if touched else ""),
-                    table, fix=f"add `{expr}` to the WHERE clause for {table}"))
+                    table, fix=f"add `{expr}` to the WHERE clause for {table}"),
+                    _table_node(scope, table))
 
     def _semijoin_satisfied(self, expr: str, scope: Scope, phys: dict[str, str],
                             preds: list[str]) -> bool:
@@ -351,7 +429,7 @@ class _Linter:
                         f"(many rows per {parent}) multiplies {parent}'s values",
                         parent, col.name,
                         fix=f"aggregate {child} in a subquery first, or restrict {parent} with "
-                            f"EXISTS/IN (SELECT ... FROM {child}) instead of joining it"))
+                            f"EXISTS/IN (SELECT ... FROM {child}) instead of joining it"), col)
 
     def _scd2(self, scope: Scope, phys: dict[str, str]) -> None:
         for alias, table in phys.items():
@@ -384,7 +462,44 @@ class _Linter:
                     f"{scd.get('valid_from')} AND COALESCE({scd.get('valid_to')}, "
                     f"DATE '9999-12-31'); for current values: "
                     + (f"{scd['is_current_flag']} = 1" if scd.get("is_current_flag")
-                       else f"{scd.get('valid_to')} IS NULL")))
+                       else f"{scd.get('valid_to')} IS NULL")),
+                _table_node(scope, table))
+
+
+def split_statements(text: str) -> list[tuple[str, int, int]]:
+    """Each statement in `text`, with where it starts: (sql, line, offset).
+
+    `line` is 0-based and `offset` is a character index, both pointing at the
+    first non-blank character of the statement. They exist so a finding can
+    be reported against the FILE rather than against the fragment it was
+    linted in -- splitting on `;` and stripping, which is what this replaces,
+    threw both away and left every finding on line 1.
+    """
+    out: list[tuple[str, int, int]] = []
+    cursor = 0
+    for chunk in text.split(";"):
+        stripped = chunk.strip()
+        if stripped:
+            begin = cursor + (len(chunk) - len(chunk.lstrip()))
+            out.append((stripped, text.count("\n", 0, begin), begin))
+        cursor += len(chunk) + 1  # the ';' the split consumed
+    return out
+
+
+def to_file_positions(result: dict, line_offset: int, char_offset: int) -> dict:
+    """Move a statement's findings into the coordinates of the whole file.
+
+    Line numbers from `lint_sql` count from the start of the STATEMENT,
+    because that is all it was given. A consumer that has the file -- an
+    editor, a CI annotation -- needs them counted from the start of the file.
+    """
+    for f in result.get("findings", []):
+        if f.get("line") is not None:
+            f["line"] += line_offset
+        for key in ("start", "end"):
+            if f.get(key) is not None:
+                f[key] += char_offset
+    return result
 
 
 def lint_sql(doc: dict, sql: str, dialect: str = "duckdb") -> dict:
@@ -419,7 +534,7 @@ def lint_sql(doc: dict, sql: str, dialect: str = "duckdb") -> dict:
     return {"ok": errors == 0, "findings": findings, "errors": errors, "warnings": warnings}
 
 
-def render_findings(result: dict) -> str:
+def render_findings(result: dict, file: str = "") -> str:
     """Plain-text rendering used by the CLI and by consumers feeding findings back to an agent."""
     if not result["findings"]:
         return "OK: no findings"
@@ -427,7 +542,19 @@ def render_findings(result: dict) -> str:
     for f in result["findings"]:
         loc = (f"{f['table']}.{f['column']}" if f.get("table") and f.get("column")
                else (f.get("table") or ""))
-        lines.append(f"[{f['severity']}] {f['rule']}{' ' + loc if loc else ''}: {f['message']}")
+        # `file:line:col` first, because most terminals make it clickable and
+        # it is the only part of this that takes you to the problem.
+        #
+        # ONLY when a file was named. This text is not just for a terminal:
+        # the CQ harness feeds it back to the model as the repair prompt, so
+        # changing it changes a cassette key and invalidates every recorded
+        # answer. Adding a position unconditionally did exactly that and the
+        # release gate caught it. A caller with a file to name is a caller
+        # printing for a human; everyone else gets the text they had.
+        at = (f"{file}:{f['line']}:{f['col']}: "
+              if file and f.get("line") is not None else "")
+        lines.append(f"{at}[{f['severity']}] {f['rule']}"
+                     f"{' ' + loc if loc else ''}: {f['message']}")
         if f.get("fix"):
             lines.append(f"    fix: {f['fix']}")
     return "\n".join(lines)

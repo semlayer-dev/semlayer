@@ -164,8 +164,12 @@ export const FEATURES = [
     what: 'Check while typing, debounced' },
   { id: 'lint.dialect', kind: 'contributes', setting: 'semlayer.dialect',
     what: 'Any SQL dialect, with no warehouse connection' },
-  { id: 'lint.positions', kind: 'logic',
-    what: 'Findings land on the right identifier despite carrying no source offset' },
+  { id: 'lint.positions', kind: 'cli', verb: 'lint', flag: '--json',
+    what: 'Findings land on the right identifier because the ENGINE reports '
+        + 'line, col and offsets. They used to be reconstructed here by '
+        + 'searching the SQL, which is why the README said the underlines '
+        + 'were close rather than exact -- and why two identical statements '
+        + 'both underlined the first one. src/positions.ts is deleted.' },
   { id: 'lint.cli', kind: 'cli', verb: 'lint',
     what: 'Findings come from the same linter the CLI runs' },
 

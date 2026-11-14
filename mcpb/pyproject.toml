@@ -1,0 +1,9 @@
+# Dependencies for the MCP bundle. The host installs these with uv at
+# install time, which is why the bundle itself is kilobytes: nothing is
+# vendored, and `server/lib` and `server/venv` must not exist (MCPB spec).
+[project]
+name = "semlayer-mcpb"
+version = "0.1.0"
+description = "semlayer as a one-click MCP bundle"
+requires-python = ">=3.10"
+dependencies = ["semlayer[warehouses]==0.7.0b6"]

@@ -40,7 +40,68 @@ uses the same tools underneath, so there is one path and not two.
 `semlayer mcp` speaks stdio, so you do not run it yourself — your client does.
 Point the client at the command and leave the arguments off.
 
+### Claude Desktop: one click
+
+Every release attaches a `semlayer-<version>.mcpb` to its
+[GitHub release](https://github.com/semlayer-dev/semlayer/releases).
+Download it and double-click, or Settings → Extensions → Install Extension.
+Desktop asks for two optional settings: a layer file, and an Anthropic API
+key. Leave both empty on a first run -- the server then reports the
+warehouses it can see and offers to build one, and the key is only needed to
+write descriptions.
+
+The bundle is kilobytes. It carries no Python and no dependencies: it
+declares `server.type: "uv"` with a `pyproject.toml`, and **Desktop's own
+MCPB runtime manages the uv and Python environment and installs the
+dependencies on first launch** — the user needs neither Python nor uv
+installed. That is the one route where "I have nothing" really does mean
+nothing.
+
+Note the asymmetry, because it is the opposite of what you would guess: a
+bundle gets a managed uv, while a hand-written `claude_desktop_config.json`
+does not. `"command": "uvx"` in a manual config fails with `spawn uv ENOENT`
+unless you give the full path.
+
+### Let semlayer write the config
+
+```bash
+semlayer client list                 # the clients on this machine, and their state
+semlayer client add claude-code      # write the entry, preserving everything else
+semlayer client add cursor --dry-run # see exactly what would change first
+```
+
+Knows Claude Code, Claude Desktop, Cursor, Cline and VS Code's own agent. It records an **absolute**
+command (a client launched from a dock does not inherit your shell's PATH),
+keeps the arguments as arguments, merges into `mcpServers` without touching
+any other server or key, and refuses rather than overwrites if the file is
+not valid JSON. `--layer PATH` pins one layer; omit it and the server finds
+one, which is what a first run wants.
+
+The JSON below is for a client this does not know, or for when you would
+rather see it yourself.
+
+### Have an agent do it
+
+Point any coding agent with a shell at this repository and ask it to install
+the semlayer MCP server. [`llms-install.md`](../llms-install.md) is written
+for that agent rather than for you: it carries the install command, the
+config shape, the absolute-path trap and the restart, and it needs no other
+file.
+
+semlayer is also in the official MCP registry as `dev.semlayer/mcp`, with
+machine-readable install instructions, so a registry-aware client can find it
+without being pointed anywhere.
+
 ### With nothing installed
+
+If you have no `uv` either, that is one line first -- it is a single binary
+and brings its own Python:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh   # macOS, Linux
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"   # Windows
+```
+
 
 > **The `--python` pin is not decoration.** On a machine with no Python at
 > all, `uv` downloads the newest CPython, and `duckdb` publishes wheels only
@@ -88,13 +149,24 @@ in a terminal can still fail there with `executable not found`.
 }
 ```
 
-This works and needs no terminal step, but know the two costs before you
-choose it. The **first launch fetches a Python and about sixty-five
-packages** — minutes — and your client is likely to give up on the server
-before that finishes and report it as failed; starting it again once the
-fetch has completed works. And `uvx` reuses a cached environment, so a
-version released after your first run will not be picked up until that cache
-turns over. `uv tool install` has neither problem, and upgrading is then an
+This works and needs no terminal step, but know the costs before you choose
+it. The **first launch fetches a Python and about sixty-five packages** —
+minutes — and your client is likely to give up on the server before that
+finishes and report it as failed; starting it again once the fetch has
+completed works. And `uvx` reuses a cached environment, so a version
+released after your first run will not be picked up until that cache turns
+over.
+
+**In Claude Desktop specifically, a bare `uvx` usually fails outright.**
+Desktop does not bundle uv, and it launches servers as GUI subprocesses with
+a restricted PATH, so `"command": "uvx"` produces `spawn uv ENOENT` even
+though the same line works in your terminal. Give the full path —
+`/opt/homebrew/bin/uvx`, `~/.local/bin/uvx` — or let `semlayer client add
+claude-desktop` write it, which resolves the absolute path for you. (Node is
+different: Desktop *does* embed a Node runtime, which is why Anthropic's own
+guidance favours TypeScript servers for zero-dependency distribution.)
+
+`uv tool install` has none of these problems, and upgrading is then an
 explicit `uv tool upgrade semlayer`.
 
 </details>
@@ -141,6 +213,28 @@ claude mcp add semlayer -- uvx --python 3.13 --with "semlayer[warehouses]" semla
 ### Cursor
 
 `~/.cursor/mcp.json`, same shape as Claude Desktop.
+
+### Claude Cowork
+
+Cowork runs in a sandboxed Linux VM, and where that VM is decides whether
+semlayer is reachable at all.
+
+**A local Cowork session**, inside Claude Desktop, reaches local MCP servers:
+they run on your host and are bridged into the session over stdio. The
+`.mcpb` bundle works there exactly as it does in Desktop itself, uv runtime
+management and all — install it once and both see it.
+
+**A Cowork plugin that declares a `uv` or `uvx` server directly**, rather
+than wrapping it in a bundle, gets no managed uv: that is the host's PATH
+again, and the user needs uv installed. The bundle is the route that avoids
+this.
+
+**A cloud Cowork session — a background or scheduled task, running while
+your laptop is shut — reaches no local server at all.** No stdio, no
+`.mcpb`. Cloud sessions can only use remote MCP connectors, which are HTTP
+or SSE endpoints configured by URL. semlayer ships a stdio server, so that
+mode is not something it can serve today, and no amount of client
+configuration changes it. A hosted endpoint is the only thing that would.
 
 ### Pointing it at one layer
 
