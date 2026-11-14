@@ -89,7 +89,7 @@ jobs:
         # this workflow file and the `vscode-marketplace` environment; change
         # any of those three and the exchange is refused.
         run: npx ovsx publish semlayer-*.vsix --trusted-publishing
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: vsix
           path: extension/*.vsix
