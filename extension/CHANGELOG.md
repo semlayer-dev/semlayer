@@ -34,11 +34,10 @@ declared.
 review queue with both consequences shown before you click, and the open
 count as a badge on the activity-bar icon.
 
-Known gaps, both in the engine rather than here:
+Diagnostic ranges are exact, taken from the engine's parser rather than
+reconstructed by searching the SQL. With an engine older than 0.7.0b6 the
+whole first line of the statement is underlined instead.
 
-- Findings carry no source offset, so diagnostic ranges are reconstructed by
-  locating the statement and then the column or table identifier inside it.
-  They are close, not exact.
-- There is no `semlayer export` subcommand yet, so exporting to dbt is
-  available only to an agent over MCP. The command is absent rather than
-  present and broken.
+One known gap, in the engine rather than here: there is no `semlayer export`
+subcommand yet, so exporting to dbt is available only to an agent over MCP.
+The command is absent rather than present and broken.

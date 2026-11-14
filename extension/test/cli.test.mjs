@@ -52,12 +52,24 @@ describe('cli contracts', opts, () => {
       'the fan-out is still detected');
   });
 
-  test('lint.cli — no source offsets, which is why positions are reconstructed', () => {
-    const out = JSON.parse(cli(['lint', LAYER, '-', '--json'], 'select 1 from ord_hdr'));
-    for (const f of out[0].findings ?? []) {
-      assert.ok(!('line' in f) && !('column_number' in f) && !('offset' in f),
-        'the engine now reports positions: src/positions.ts can be deleted');
+  test('lint.cli — the engine reports positions, so nothing reconstructs them', () => {
+    // This test used to assert the OPPOSITE: that no finding carried a
+    // position, which is why src/positions.ts existed to search the text for
+    // one. The engine reports them now, that file is deleted, and the
+    // underlines are exact rather than "close".
+    const sql = 'select sum(h.tot_amt)\nfrom ord_hdr h\njoin ord_ln l on l.ord_id = h.ord_id';
+    const out = JSON.parse(cli(['lint', LAYER, '-', '--json', '--dialect', 'duckdb'], sql));
+    const [stmt] = out;
+    assert.equal(typeof stmt.offset, 'number', 'the statement says where it starts');
+
+    const fanout = stmt.findings.find((f) => f.rule === 'fanout_aggregate');
+    assert.ok(fanout, 'the fan-out is still detected');
+    for (const k of ['line', 'col', 'start', 'end']) {
+      assert.equal(typeof fanout[k], 'number', `a finding is missing ${k}`);
     }
+    // The offsets must index the identifier the finding is about, in the
+    // text we sent -- that is the whole contract the extension relies on.
+    assert.equal(sql.slice(fanout.start, fanout.end + 1), 'tot_amt');
   });
 
   test('create.scope — probe reports what the extension reads', () => {

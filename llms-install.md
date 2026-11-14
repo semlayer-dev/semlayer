@@ -32,10 +32,23 @@ over.
 
 ## Step two: configuration
 
-Get the absolute path — `which semlayer`, usually `~/.local/bin/semlayer` —
-and use it. A client launched from a dock or a desktop icon does not inherit
-the user's shell PATH, so a bare `semlayer` that works in a terminal can
-still fail inside the client.
+Do not hand-edit the JSON. semlayer writes it:
+
+```bash
+semlayer client list            # which clients are on this machine
+semlayer client add claude-code # or claude-desktop, cursor, cline, vscode
+```
+
+That records an absolute command path, keeps the arguments separate, merges
+into `mcpServers` without disturbing any other server, and refuses rather
+than overwrites a file that is not valid JSON. Pass `--dry-run` first if you
+want to show the user the change before making it.
+
+For a client it does not know, write this shape yourself — and note the
+command must be an ABSOLUTE path (`which semlayer`, usually
+`~/.local/bin/semlayer`): a client launched from a dock or a desktop icon
+does not inherit the user's shell PATH, so a bare `semlayer` that works in a
+terminal fails inside the client.
 
 ```json
 {

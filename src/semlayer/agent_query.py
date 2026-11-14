@@ -270,7 +270,7 @@ def run(doc: dict, source, sql: str, *, dialect: str = "duckdb",
     The row cap is separate and stays: that is about what fits in a model's
     context, not about the warehouse.
     """
-    from semlayer.lint import lint_sql, render_findings
+    from semlayer.lint import lint_sql, render_findings, without_positions
 
     refused = select_only(sql, dialect)
     if refused is not None:
@@ -278,7 +278,9 @@ def run(doc: dict, source, sql: str, *, dialect: str = "duckdb",
                 "next": ("Tell the user what you tried to run and why it was "
                          "refused. run_sql reads; it never writes.")}
 
-    lint = lint_sql(doc, sql, dialect=dialect)
+    # Without positions: this whole object is handed to a model, and the
+    # recorded cassettes pin its text. See `without_positions`.
+    lint = without_positions(lint_sql(doc, sql, dialect=dialect))
     touched = tables_in(sql, dialect)
     if lint["errors"]:
         return {"ran": False, "sql": sql, "lint": lint,

@@ -2,6 +2,87 @@
 
 ## Unreleased
 
+## 0.7.0b6
+
+### A GitHub Action: findings on the pull request diff
+
+```yaml
+- uses: semlayer-dev/semlayer@v0.7.0-beta.6
+  with:
+    mode: lint          # or drift, to fail when the warehouse moved
+    layer: layer.yaml
+```
+
+The marker lands on the identifier the finding is about, with the fix
+underneath, because the engine now reports positions. That is the only thing
+the action does that four lines of `run:` could not.
+
+`fail-on: never` annotates without failing, which is how to introduce this to
+a repository with years of SQL in it. Lint mode installs semlayer WITHOUT the
+warehouse drivers — it opens no warehouse — so a pull request check takes
+seconds. `maintain` is deliberately not a mode: it needs repository write and
+a standing branch, and stays the workflow template in `examples/maintain/`.
+
+### Findings say where they are
+
+`lint` findings carried rule, severity, message, table, column and a fix --
+and no position. Every consumer had to guess one. The VS Code extension
+searched the text for the identifier and its README admitted the underlines
+were "close, not exact"; a CI annotation could do no better than mark line 1.
+
+They now carry `line`, `col`, `start` and `end`, and nothing searches text
+for them: sqlglot has been recording exact positions on the `Identifier`
+inside every Column and Table all along, and the linter simply never read
+them. `col` is normalised to where the name BEGINS -- sqlglot stores the
+column of a token's last character, which is not what any editor wants.
+
+`semlayer lint` now prints `file:line:col:` ahead of each finding, which
+most terminals make clickable, and `--json` carries the same numbers. A
+finding with no node behind it -- a parse failure -- reports no position
+rather than a misleading one.
+
+Statements within a file are split with their offsets kept, so a finding in
+the third statement is reported against the file's line, not the fragment's.
+The tests resolve every position twice, once by line and column and once by
+byte offset, and require the two to agree.
+
+### A one-click bundle for Claude Desktop
+
+Every release now attaches a `semlayer-<version>.mcpb`. Double-click it, or
+Settings → Extensions → Install Extension, and Desktop asks for a layer file
+and an API key -- both optional, because a first run wants neither.
+
+It is **kilobytes**: `server.type: "uv"` means the host resolves
+`semlayer[warehouses]` from PyPI at install time, so the bundle vendors
+nothing and is not platform-specific. The alternative `python` bundle type
+would have shipped pyarrow, the Snowflake connector and the BigQuery client,
+once per platform. The dependency is pinned to the exact release the bundle
+ships beside, and it is built AFTER the PyPI publish -- a bundle attached
+before its wheel exists is one a user can download and cannot install.
+
+### `semlayer client add`: nobody should hand-edit an MCP config
+
+Three ways hand-editing fails, all of them observed on real machines: the
+snippet lands at the top level of the file instead of inside `mcpServers`,
+where it is silently inert; the command is a bare `semlayer`, which resolves
+in a terminal and not in a client launched from a dock; or an editor that
+keeps session state in the same JSON overwrites the edit on its next write.
+
+```
+semlayer client list                 # clients on this machine, and their state
+semlayer client add claude-code      # write the entry, preserving everything else
+semlayer client add cursor --dry-run # see the change first
+```
+
+Knows Claude Code, Claude Desktop, Cursor, Cline and VS Code's own agent
+(Copilot's portable `~/.copilot/mcp-config.json`, not the `.vscode/mcp.json`
+that VS Code has marked for removal in February 2027). Records an absolute
+command, keeps arguments as arguments, merges without touching any other
+server or key, and refuses rather than overwrites a file that is not valid
+JSON. `--json` for agents, which is the caller this is really for: an agent
+asked to "install the semlayer MCP server" was otherwise editing someone
+else's JSON by hand.
+
 ## 0.7.0b5
 
 Everything here was found by one person walking the three steps on a clean

@@ -149,6 +149,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     _add_review_parser(sub)
     _add_maintain_parser(sub)
+    _add_client_parser(sub)
 
     p = sub.add_parser("telemetry",
                        help="Show or change anonymous usage telemetry")
@@ -233,6 +234,37 @@ def _warn_if_overwriting_verdicts(args: argparse.Namespace) -> None:
               f"overwrite them; use --into {args.out} to keep them", file=sys.stderr)
 
 
+def _add_client_parser(sub) -> None:
+    """`semlayer client` -- write this server into an MCP client's config.
+
+    A namespace of its own rather than `semlayer mcp install`, because `mcp`
+    already takes a layer path as its positional and `semlayer mcp install`
+    would be a file called `install` as often as it was a subcommand. The
+    noun is the client; `add` and `list` are what you do to it.
+    """
+    p = sub.add_parser("client",
+                       help="Connect an MCP client to this server, without "
+                            "hand-editing its JSON")
+    cs = p.add_subparsers(dest="client_command", required=True)
+
+    ls = cs.add_parser("list", help="MCP clients on this machine, and their state")
+    ls.add_argument("--json", action="store_true", help="machine-readable")
+
+    ad = cs.add_parser("add", help="Write semlayer into one client's config")
+    ad.add_argument("client", help="claude-code | claude-desktop | cursor | cline")
+    ad.add_argument("--layer", metavar="PATH", default=None,
+                    help="Serve this layer. Omit to let the server find one, "
+                         "which is what a first run wants: with no layer it "
+                         "reports the warehouses it can see and offers to "
+                         "build one.")
+    ad.add_argument("--cli", metavar="NAME", default=None,
+                    help="The launcher to record (default: the `semlayer` on "
+                         "PATH, resolved to an absolute path)")
+    ad.add_argument("--dry-run", action="store_true",
+                    help="Print what would change and write nothing")
+    ad.add_argument("--json", action="store_true", help="machine-readable")
+
+
 def _add_maintain_parser(sub) -> None:
     p = sub.add_parser("maintain",
                        help="Keep a layer true: detect drift, plan the re-inference, "
@@ -312,6 +344,54 @@ def _cmd_maintain(args: argparse.Namespace) -> int:
     if r.applied:
         return 0 if r.valid else 1
     return 1  # drift found, nothing written: the CI-hook answer
+
+
+def _cmd_client(args: argparse.Namespace) -> int:
+    import json
+
+    from semlayer import mcp_install as mi
+
+    if args.client_command == "list":
+        rows = [{"id": c.id, "label": c.label, "path": str(c.path),
+                 "config_found": c.exists,
+                 "configured": "semlayer" in (mi.read_config(c.path).get(c.key) or {})
+                 if c.exists else False}
+                for c in mi.clients()]
+        if args.json:
+            print(json.dumps(rows, indent=1))
+            return 0
+        for r in rows:
+            state = ("configured" if r["configured"]
+                     else "config found" if r["config_found"]
+                     else "no config here yet")
+            print(f"{r['id']:16} {state:20} {r['path']}")
+        print("\nsemlayer client add <id>   writes the entry for one of these")
+        return 0
+
+    client = mi.find(args.client)
+    result = (mi.plan if args.dry_run else mi.apply)(client, args.layer, args.cli)
+
+    if args.json:
+        out = {k: v for k, v in result.items() if k != "merged"}
+        out["dry_run"] = bool(args.dry_run)
+        out["restart"] = mi.RESTART_NOTE
+        if mi.warning_for(client):
+            out["warning"] = mi.warning_for(client)
+        print(json.dumps(out, indent=1))
+        return 0
+
+    verb = "would write" if args.dry_run else "wrote"
+    if result["unchanged"] and not args.dry_run:
+        verb = "already correct in"
+    print(f"{verb} {result['path']}")
+    print(f'  "semlayer": {json.dumps(result["after"])}')
+    if result["other_servers"]:
+        print(f"  (left alone: {', '.join(result['other_servers'])})")
+    warn = mi.warning_for(client)
+    if warn:
+        print(f"\nnote: {warn}")
+    print(f"\n{mi.RESTART_NOTE}")
+    return 0
 
 
 def _add_review_parser(sub) -> None:
@@ -956,21 +1036,32 @@ def _cmd_drift(args: argparse.Namespace) -> int:
 def _cmd_lint(args: argparse.Namespace) -> int:
     import json
 
-    from semlayer.lint import lint_sql, render_findings
+    from semlayer.lint import (
+        lint_sql,
+        render_findings,
+        split_statements,
+        to_file_positions,
+    )
 
     doc = _load_doc(args.doc)
     text = sys.stdin.read() if args.sql == "-" else Path(args.sql).read_text()
-    statements = [x.strip() for x in text.split(";") if x.strip()]
+    where = "<stdin>" if args.sql == "-" else args.sql
     worst = 0
     results = []
-    for stmt in statements:
-        r = lint_sql(doc, stmt, dialect=args.dialect)
-        results.append({"sql": stmt, **r})
+    for stmt, line_offset, char_offset in split_statements(text):
+        r = to_file_positions(lint_sql(doc, stmt, dialect=args.dialect),
+                              line_offset, char_offset)
+        # `offset` and `line` locate the statement itself, so a consumer with
+        # the original text never has to search for it -- which is what the
+        # VS Code extension used to do, and why two identical statements
+        # could both underline the first one.
+        results.append({"sql": stmt, "file": where,
+                        "offset": char_offset, "line": line_offset + 1, **r})
         worst = max(worst, 2 if r["errors"] else (1 if r["warnings"] else 0))
         if not args.json:
             head = stmt.replace("\n", " ")
             print(f"-- {head[:90]}{'…' if len(head) > 90 else ''}")
-            print(render_findings(r))
+            print(render_findings(r, where))
             print()
     if args.json:
         print(json.dumps(results, indent=2, default=str))
@@ -1139,6 +1230,7 @@ _HANDLERS = {
     "drift": _cmd_drift,
     "lint": _cmd_lint,
     "mcp": _cmd_mcp,
+    "client": _cmd_client,
     "telemetry": _cmd_telemetry,
 }
 

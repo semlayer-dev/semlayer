@@ -100,7 +100,7 @@ jobs:
     environment: pypi
     permissions:
       id-token: write   # trusted publishing (OIDC) — no tokens anywhere
-      contents: read
+      contents: write   # attach the .mcpb bundle to the release
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -157,6 +157,25 @@ jobs:
           python -m pytest tests/test_benchmark_replays.py -q
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+
+      - name: Build the MCP bundle and attach it to the release
+        # AFTER the publish, and it has to be: the bundle asks PyPI for
+        # `semlayer[warehouses]==<this version>` at INSTALL time, so one
+        # attached before the wheel exists is a bundle a user can download
+        # and cannot install.
+        #
+        # Kilobytes, not hundreds of megabytes. `server.type: "uv"` means the
+        # host resolves dependencies itself, so nothing is vendored and
+        # nothing is platform-specific -- the `python` type would have meant
+        # shipping pyarrow, the Snowflake connector and the BigQuery client,
+        # once per platform.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V=$(python mcpb/prepare.py)
+          npx -y @anthropic-ai/mcpb validate mcpb/manifest.json
+          npx -y @anthropic-ai/mcpb pack mcpb "semlayer-$V.mcpb"
+          gh release upload "${{ github.ref_name }}" "semlayer-$V.mcpb" --clobber
 
       - name: Register the release with the official MCP Registry
         # AFTER the PyPI publish, and it has to be: the registry validates

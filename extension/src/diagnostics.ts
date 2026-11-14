@@ -4,16 +4,20 @@
  * This is the one thing the extension does that a terminal cannot: a finding
  * is only useful at the moment you are writing the line.
  *
- * Positions are reconstructed here, not reported by the engine. A finding
- * carries rule/severity/message/table/column/fix and no source offset, so we
- * locate the statement by the SQL the engine echoes back, then the column or
- * table identifier inside it. Where that fails the whole statement is
- * underlined rather than guessing a narrower range.
+ * Positions come from the ENGINE now. They used to be reconstructed here --
+ * find the statement by the SQL the engine echoed back, then search it for
+ * the table or column identifier -- and the README had to admit the
+ * underlines were "close, not exact". They were also wrong in a way nobody
+ * would report: two identical statements both underlined the first one.
+ *
+ * `lint --json` reports `line`, `col`, `start` and `end` per finding, taken
+ * from the parser rather than from a text search, and `offset` per
+ * statement. We send the document's own text, so those offsets index
+ * straight into the document.
  */
 import * as vscode from 'vscode';
 import { run } from './cli';
 import * as layers from './layer';
-import { locate, rangeFor, Finding, StatementResult } from './positions';
 
 /** Held back while the user is mid-keystroke: half-written SQL never parses. */
 const WHILE_TYPING_SUPPRESSED = new Set(['parse_error']);
@@ -24,11 +28,38 @@ const SEVERITY: Record<string, vscode.DiagnosticSeverity> = {
   info: vscode.DiagnosticSeverity.Information,
 };
 
-function toRange(doc: vscode.TextDocument, stmtStart: number, stmtText: string,
+/** One finding from `semlayer lint --json`. */
+export interface Finding {
+  rule: string;
+  severity: 'error' | 'warning' | 'info';
+  message: string;
+  table: string | null;
+  column: string | null;
+  fix: string | null;
+  /** Offsets into the text that was linted. Absent for a parse failure. */
+  start?: number | null;
+  end?: number | null;
+}
+
+export interface StatementResult {
+  sql: string;
+  /** Where this statement begins in the linted text. */
+  offset?: number;
+  findings: Finding[];
+}
+
+function toRange(doc: vscode.TextDocument, stmt: StatementResult,
                  f: Finding): vscode.Range {
-  const span = rangeFor(stmtText, f);
-  return new vscode.Range(doc.positionAt(stmtStart + span.offset),
-                          doc.positionAt(stmtStart + span.offset + span.length));
+  if (typeof f.start === 'number' && typeof f.end === 'number') {
+    // `end` is the last character of the identifier, not one past it.
+    return new vscode.Range(doc.positionAt(f.start), doc.positionAt(f.end + 1));
+  }
+  // No anchor -- a parse failure, which is about the statement rather than
+  // anything in it. Underline its first line rather than inventing a range.
+  const start = stmt.offset ?? 0;
+  const newline = stmt.sql.search(/\r?\n/);
+  const length = newline < 0 ? stmt.sql.length : newline;
+  return new vscode.Range(doc.positionAt(start), doc.positionAt(start + length));
 }
 
 export class Linter {
@@ -94,14 +125,13 @@ export class Linter {
       if (this.inflight.get(key) === cancel) { this.inflight.delete(key); }
     }
 
-    const starts = locate(text, parsed);
     const diagnostics: vscode.Diagnostic[] = [];
 
-    parsed.forEach((stmt, i) => {
+    parsed.forEach((stmt) => {
       for (const f of stmt.findings) {
         if (whileTyping && WHILE_TYPING_SUPPRESSED.has(f.rule)) { continue; }
         const d = new vscode.Diagnostic(
-          toRange(doc, starts[i], stmt.sql, f),
+          toRange(doc, stmt, f),
           f.fix ? `${f.message}\n\nfix: ${f.fix}` : f.message,
           SEVERITY[f.severity] ?? vscode.DiagnosticSeverity.Warning);
         d.source = 'semlayer';

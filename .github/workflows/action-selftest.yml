@@ -1,0 +1,83 @@
+# Does the action actually work?
+#
+# The unit tests cover annotate.py; nothing covers the shell around it --
+# the globbing, the exit codes, the heredoc writing $GITHUB_OUTPUT. Those
+# only break in a runner, so they are tested in one.
+#
+# It builds a real layer from the sample warehouse rather than committing a
+# fixture, which means this also fails if `demo` or `infer` breaks.
+name: action self-test
+
+on:
+  pull_request:
+    paths: ["action.yml", "action/**", ".github/workflows/action-selftest.yml",
+            "src/semlayer/lint.py", "src/semlayer/cli.py"]
+  push:
+    branches: [main]
+    paths: ["action.yml", "action/**"]
+  workflow_dispatch: {}
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      # From the checkout, so this tests the code under review. The action
+      # uses whatever `semlayer` is on PATH when no version is pinned.
+      - name: Install the engine under test
+        run: python -m pip install --quiet .
+
+      - name: Build a layer to lint against
+        run: |
+          semlayer demo
+          semlayer infer duckdb:messy_mart.duckdb --no-llm -o layer.yaml
+
+      - name: SQL with two mistakes that execute cleanly
+        run: |
+          cat > query.sql <<'SQL'
+          -- Q4 revenue by month
+          SELECT date_trunc('month', h.ord_dt) AS period,
+                 SUM(h.tot_amt)               AS revenue
+          FROM ord_hdr h
+          JOIN ord_ln l ON l.ord_id = h.ord_id
+          GROUP BY 1
+          SQL
+
+      - name: It finds them, and fails the job
+        id: lint
+        continue-on-error: true
+        uses: ./
+        with:
+          mode: lint
+          layer: layer.yaml
+          files: query.sql
+
+      - name: The failure was the point
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.lint.outcome }}" != "failure" ]; then
+            echo "::error::lint passed SQL that fans out a sum and skips a required filter"
+            exit 1
+          fi
+          echo "lint failed the job, as it should"
+
+      - name: Clean SQL passes
+        uses: ./
+        with:
+          mode: lint
+          layer: layer.yaml
+          files: clean.sql
+        # The file does not exist: a glob matching nothing must be a pass,
+        # not a crash. That is the commonest run in a repository where most
+        # pull requests touch no SQL at all.
+
+      - name: Drift against the warehouse it was built from
+        uses: ./
+        with:
+          mode: drift
+          layer: layer.yaml
+          source: duckdb:messy_mart.duckdb

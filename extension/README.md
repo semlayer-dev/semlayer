@@ -121,10 +121,11 @@ does not have, which is correctly nothing to report rather than an error.
 Usually the dialect. `semlayer.dialect` defaults to `duckdb`, and syntax another
 engine accepts will not parse as DuckDB. Set it to the warehouse you write for.
 
-**Findings underline the wrong token.**
-Expected, within limits. Ranges are reconstructed rather than reported — see
-Known gaps below. The message and the fix are always right even when the
-underline is a few characters off.
+**Findings underline the whole first line instead of a token.**
+That is the fallback for an engine older than 0.7.0b6, which did not report
+positions — the extension used to reconstruct them by searching the SQL, and
+now asks the engine instead. Upgrade (`uv tool upgrade semlayer`) and the
+underline lands on the identifier.
 
 **The client does not list semlayer — `/mcp` shows nothing.**
 Start a new session of that client. MCP clients read their server list once,
@@ -136,11 +137,6 @@ tells you it has no revenue data.
 **`semlayer: Get started`** reopens the walkthrough at any time.
 
 ## Known gaps
-
-Diagnostic ranges are reconstructed, not reported: a finding carries rule,
-severity, message, table, column and fix, but no source offset. The extension
-locates the statement and then the identifier inside it, so ranges are close
-rather than exact.
 
 There is no `semlayer export` subcommand yet, so exporting to dbt is available
 only to an agent over MCP.

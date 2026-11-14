@@ -25,7 +25,25 @@ Desktop, Claude Code or Cursor and ask it what it can see — it discovers the
 warehouses configured on your machine and says what to do next, with no layer
 built yet. See [docs/mcp.md](docs/mcp.md).
 
+**Or have the agent install it.** Point any coding agent at this repository
+and ask it to install the semlayer MCP server: everything it needs is in
+[llms-install.md](llms-install.md), written for an agent rather than a
+person, and it needs nothing else. semlayer is also in the official MCP
+registry as `dev.semlayer/mcp`, so a registry-aware client can find and
+install it without being told where to look.
+
 In VS Code and Cursor, the same layer underlines the fan-out joins and missing required filters as you type — [docs/vscode.md](docs/vscode.md).
+
+In CI, the same findings land on the pull request diff:
+
+```yaml
+- uses: semlayer-dev/semlayer@v0.7.0-beta.6
+  with:
+    mode: lint            # or: drift, to fail when the warehouse moved
+    layer: layer.yaml
+```
+
+[docs/ci.md](docs/ci.md).
 
 From a checkout (to develop on semlayer itself): `pip install -e ".[warehouses]"`.
 
