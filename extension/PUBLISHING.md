@@ -16,17 +16,25 @@ each, and they are separate namespaces.
 - Open VSX: sign in at <https://open-vsx.org> with GitHub, agree to the
   publisher agreement, then create the `semlayer` namespace.
 
-**2. Create tokens.**
+**2. Register this workflow as a trusted publisher on BOTH registries.**
+No tokens. Each registry mints a short-lived one at publish time from the
+workflow's OIDC identity, so there is nothing to leak, rotate or forget --
+the same mechanism the PyPI job already uses.
 
-- Azure DevOps → User settings → Personal access tokens. Scope:
-  **Marketplace → Manage**, organisation **All accessible organisations**.
-  A token scoped to a single organisation fails with a 401 that does not say
-  why.
-- Open VSX → profile → Access Tokens.
+- VS Code Marketplace: <https://marketplace.visualstudio.com/manage>, under
+  the publisher's settings.
+- Open VSX: <https://open-vsx.org/user-settings/trusted-publishers>.
 
-**3. Store them as repository secrets** — `VSCE_PAT` and `OVSX_PAT` — if you
-want the release workflow to publish. Never put either in `.npmrc`, an env
-file, or the repo.
+Both pin three things: the repository (`semlayer-dev/semlayer`), the
+**workflow file name** (`release.yml`) and the environment
+(`vscode-marketplace`). Renaming the workflow file or the environment breaks
+publishing, and nothing in this repository can warn you -- the refusal comes
+from the registry.
+
+A PAT still works as a fallback on either side (`vsce publish --pat`,
+`ovsx publish --pat`), and `--pat` takes precedence over trusted publishing
+if both are present. Prefer not to: a token in a repository secret is a
+standing liability for a step that runs a few times a year.
 
 ## Publishing
 
