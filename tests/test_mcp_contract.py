@@ -113,6 +113,22 @@ def test_handshake_carries_instructions(server) -> None:
     assert "status" in text, "the instructions do not tell a client to call status first"
     assert "context_for_question" in text
 
+    # The order these two facts appear in decides what an agent does when it
+    # is asked a data question. A user connected this server, asked about
+    # revenue, and was told there was no semantic layer -- by an agent that
+    # had called nothing. It had read sentence two, "a semantic layer is not
+    # something this machine has by default", and answered from it. The
+    # instruction to CALL has to come before the description of the empty
+    # case, and the empty case has to read as conditional.
+    call_at = text.index("CALL `status`")
+    empty_at = text.index("has to be BUILT")
+    assert call_at < empty_at, (
+        "the empty-layer explanation comes before the instruction to call "
+        "status; an agent asked about data will answer from it")
+    assert "Only if it reports none" in text, (
+        "the empty case must be explicitly conditional, or it reads as a "
+        "statement of fact about this machine")
+
 
 def test_every_tool_is_registered(server) -> None:
     client, _ = server
@@ -143,10 +159,21 @@ def test_every_tool_describes_itself(server) -> None:
 
 
 def test_context_for_question_is_the_documented_entry_point(server) -> None:
-    """Its description is load-bearing: it is what makes an agent start there."""
+    """Its description is load-bearing: it is what makes an agent start there.
+
+    And it must not make starting there CONDITIONAL on a layer being loaded.
+    It used to read "START EVERY QUESTION HERE once a layer is loaded", which
+    invites the agent to decide that question for itself -- and one did,
+    wrongly, with a 36-table layer loaded, telling the user it had no data.
+    Any tool called with no layer answers with `status` rather than failing,
+    so there is nothing for the agent to check first.
+    """
     client, _ = server
     tools = {t["name"]: t for t in client.call("tools/list")["tools"]}
-    assert "START EVERY QUESTION HERE" in tools["context_for_question"]["description"].upper()
+    desc = tools["context_for_question"]["description"]
+    assert "START EVERY QUESTION" in desc.upper()
+    assert "once a layer is loaded" not in desc
+    assert "not sure" in desc, "it must cover the case the agent would guess at"
 
 
 def test_with_no_layer_every_tool_says_what_to_do_next(server) -> None:

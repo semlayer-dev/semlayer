@@ -12,31 +12,59 @@ applied. It then serves that over MCP, and can run SQL against the warehouse.
 
 ## Prerequisite
 
-`uvx` (from [uv](https://docs.astral.sh/uv/)). Check with `uvx --version`. If
+`uv` (from [uv](https://docs.astral.sh/uv/)). Check with `uv --version`. If
 absent: `curl -LsSf https://astral.sh/uv/install.sh | sh`.
 
-## Configuration
+## Step one: install the engine
 
-Add to the client's MCP config:
+```bash
+uv tool install --python 3.13 "semlayer[warehouses]"
+```
+
+Do this **before** writing the config, and do not skip it in favour of
+pointing the client at `uvx`. Running the server through `uvx` makes the
+client's first launch fetch a Python and about sixty-five packages, which
+takes minutes; most clients give up and report the server as failed, and the
+user sees `executable not found` or a dead server rather than a download in
+progress. Installing first makes startup instant and makes upgrades explicit
+(`uv tool upgrade semlayer`) instead of depending on when uvx's cache turns
+over.
+
+## Step two: configuration
+
+Get the absolute path — `which semlayer`, usually `~/.local/bin/semlayer` —
+and use it. A client launched from a dock or a desktop icon does not inherit
+the user's shell PATH, so a bare `semlayer` that works in a terminal can
+still fail inside the client.
 
 ```json
 {
   "mcpServers": {
     "semlayer": {
-      "command": "uvx",
-      "args": ["--python", "3.13", "--with", "semlayer[warehouses]", "semlayer", "mcp"]
+      "command": "/absolute/path/to/semlayer",
+      "args": ["mcp"]
     }
   }
 }
 ```
 
-Then restart the client.
+Then **start a new session of the client**. Every MCP client reads its server
+list once, at startup — a window or session that was already open when the
+config was written has never seen the entry, and will report no semlayer
+tools (in Claude Code, `/mcp` simply will not list it). Do not debug the
+config over this; open a new session first.
 
-**`--with semlayer[warehouses]` is not decoration.** The Snowflake, BigQuery
-and Postgres drivers are optional dependencies. Without them the server can
+**The `[warehouses]` extra is not decoration.** The Snowflake, BigQuery and
+Postgres drivers are optional dependencies. Without them the server can
 *find* a warehouse and not open it, which fails on the first real request
-rather than at startup — so a config missing that argument looks like it
-worked.
+rather than at startup — so an install missing that extra looks like it
+worked. `status` reports which drivers are importable; if one is missing,
+re-run the install command above rather than guessing.
+
+**The `--python 3.13` pin is not decoration either.** On a machine with no
+Python, `uv` otherwise downloads the newest CPython, and `duckdb` publishes
+wheels only up to cp314 — so the install falls back to building from source,
+wants CMake, and fails after about two and a half minutes.
 
 ## Optional environment
 

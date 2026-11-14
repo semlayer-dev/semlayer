@@ -67,6 +67,25 @@ const CONNS_TTL_MS = 60_000;
 let findingsCache: { path: string; n: number; at: number } | undefined;
 const FINDINGS_TTL_MS = 5 * 60_000;
 
+/**
+ * How far this machine has got: no uv, uv, or a usable engine.
+ *
+ * Exported so the commands outside the panel ask the panel's own question
+ * rather than their own. `recheck` and the install watcher each had a private
+ * yes/no ("did `version()` answer?"), which cannot see the middle state and
+ * reported it as failure.
+ */
+export async function currentRoute(): Promise<engine.Route> {
+  const configured = vscode.workspace.getConfiguration('semlayer')
+    .get<string>('cliPath') ?? 'semlayer';
+  return engine.resolve(
+    configured, { works: (argv) => probeCommand(argv) }, os.homedir());
+}
+
+export async function currentStage(): Promise<engine.Stage> {
+  return engine.stage(await currentRoute());
+}
+
 export function invalidateDrift(): void { cachedDrift = undefined; }
 export function invalidateConnections(): void { connsCache = undefined; }
 export function invalidateFindings(): void { findingsCache = undefined; }
@@ -296,13 +315,30 @@ export class Panel implements vscode.WebviewViewProvider {
 
     if (route.kind === 'install') {
       setRoute(undefined);
-      const [first, ...rest] = engine.installers();
+      // `route.via` IS the answer. This used to discard it and always offer
+      // `installers()[0]` -- "Install uv" -- so a user who had just installed
+      // uv pressed Check again and was offered uv a second time, and a third.
+      // The resolver had said "Install the engine" every time and nothing
+      // read it. It stayed hidden while the uvx route outranked this branch;
+      // the moment the install was preferred over uvx it became the first
+      // thing a new user sees.
+      const via = route.via;
+      // Narrowed: inside this branch there is no engine, so `stage` is one of
+      // the two install stages and the view's type says so.
+      const stage = engine.stage(route) === 'uv' ? 'uv' as const : 'nothing' as const;
+      const rest = engine.installers().slice(1);
       return {
         cli: null,
         offer: {
           kind: 'install',
-          label: first.label, command: first.command, note: first.note,
-          alternatives: rest,
+          label: via.label, command: via.command, note: via.note,
+          stage,
+          // With uv already here, "install uv another way" is not an
+          // alternative to anything. The Python routes still are: they are
+          // other ways to get the ENGINE.
+          alternatives: stage === 'uv'
+            ? rest.filter((a) => a.command.includes('semlayer'))
+            : rest,
         },
       };
     }

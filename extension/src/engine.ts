@@ -46,13 +46,83 @@ export interface Installer {
  * This is the step `uvx` appeared to save and did not: the download happens
  * either way. Here it happens on purpose, once, with output on screen.
  */
+/** The label that marks the second stage, read by `stage()` and the panel. */
+export const ENGINE_LABEL = 'Install the engine';
+
+/**
+ * How far along this machine is, in the only three steps there are.
+ *
+ *   nothing  no uv, no engine -- offer uv
+ *   uv       uv is here, the engine is one command away
+ *   engine   usable now
+ *
+ * This exists because asking "is there an engine?" has a third answer since
+ * the install stopped being skipped in favour of the uvx route, and both
+ * callers that asked it as a yes/no reported the middle state as failure:
+ * installing uv and pressing Check again answered "Still no engine ... press
+ * Check again", which reads as a loop while the panel behind it has quietly
+ * grown the button that finishes the job.
+ */
+export type Stage = 'nothing' | 'uv' | 'engine';
+
+export function stage(route: Route): Stage {
+  if (route.kind !== 'install') { return 'engine'; }
+  return route.via.label === ENGINE_LABEL ? 'uv' : 'nothing';
+}
+
+/**
+ * The install this machine needs, as ONE function both the panel and the
+ * button read.
+ *
+ * They each had their own idea. The panel was fixed to render `route.via`
+ * while the button still ran `installers()[0]`, so a user looking at
+ * "Install the engine" pressed it and watched uv install itself a second
+ * time. A screen and its button disagreeing about what the button does is
+ * the shape of bug this file keeps producing; there is now one answer.
+ */
+export function offerFor(route: Route): Installer {
+  return route.kind === 'install' ? route.via : bootstrap();
+}
+
 export function engineInstall(uv = 'uv'): Installer {
   return {
-    label: 'Install the engine',
+    label: ENGINE_LABEL,
     command: `${uv} tool install --python ${UVX_PYTHON} "semlayer[warehouses]"`,
     note: 'One time, about a minute -- it downloads a Python and the warehouse '
         + 'drivers. It leaves a `semlayer` command on your PATH, and every call '
         + 'after this one is instant.',
+  };
+}
+
+/**
+ * Both installs in one command, for a machine that has neither.
+ *
+ * There is no reason to ask twice. The two steps were an artifact of
+ * modelling what is MISSING rather than what the user came for, which is an
+ * engine: a user with nothing pressed a button, watched uv install itself,
+ * read uv's own sign-off ("everything's installed!"), and was then shown a
+ * second button for the step that actually installs semlayer.
+ *
+ * `&&` rather than `;` so a failed uv install does not go on to run a
+ * nonexistent uv, and the absolute path because the installer appends uv to
+ * the PATH of FUTURE shells -- not the one it is running in.
+ *
+ * Windows keeps the two steps: chaining them means nesting quotes inside
+ * `powershell -c "..."` around a `$env:USERPROFILE` path that may contain a
+ * space, and a quoting bug there would break the first thing a new user
+ * touches. The panel guides both halves correctly, so the cost is one extra
+ * click on the platform where the risk is real.
+ */
+export function bootstrap(platform = process.platform): Installer {
+  const [uv] = installers(platform);
+  if (platform === 'win32') { return uv; }
+  return {
+    label: 'Install semlayer',
+    command: `${uv.command} && "$HOME/.local/bin/uv" tool install `
+           + `--python ${UVX_PYTHON} "semlayer[warehouses]"`,
+    note: 'Two downloads in one step: uv, which brings its own Python, then the '
+        + 'engine and the warehouse drivers. About a minute, once. Nothing else '
+        + 'on your machine is touched.',
   };
 }
 
@@ -159,16 +229,26 @@ export function candidates(home: string, platform = process.platform): string[][
   const join = (...parts: string[]) => parts.join(sep);
 
   const uvHomes = [join(home, '.local', 'bin'), join(home, '.cargo', 'bin')];
-  const out: string[][] = [];
+  return uvHomes.map((dir) => [join(dir, `semlayer${exe}`)]);
+}
 
-  // A direct install of semlayer first -- it is faster than going through uvx.
-  for (const dir of uvHomes) {
-    out.push([join(dir, `semlayer${exe}`)]);
-  }
-  for (const dir of uvHomes) {
-    out.push([join(dir, `uvx${exe}`), ...UVX_ARGV.slice(1)]);
-  }
-  return out;
+/**
+ * Running the engine THROUGH uvx, which is a different thing from having it.
+ *
+ * Split out of `candidates` because being in that list made it beat the
+ * install offer, and a machine with uv but no engine then ran every call
+ * through uvx forever. Two costs, both paid silently: the first call fetches
+ * a Python and sixty-five packages, and uvx will happily reuse a cached
+ * environment -- one walkthrough built a layer stamped `engine: 0.7.0b3` six
+ * minutes after 0.7.0b4 was published. `uv tool install` is one visible step
+ * that ends both.
+ */
+export function uvxCandidates(home: string, platform = process.platform): string[][] {
+  const exe = platform === 'win32' ? '.exe' : '';
+  const sep = platform === 'win32' ? '\\' : '/';
+  const join = (...parts: string[]) => parts.join(sep);
+  return [join(home, '.local', 'bin'), join(home, '.cargo', 'bin')]
+    .map((dir) => [join(dir, `uvx${exe}`), ...UVX_ARGV.slice(1)]);
 }
 
 /** Where a `uv` binary lands, same reasoning as `candidates`. */
@@ -236,10 +316,26 @@ export async function resolve(configured: string, probe: Probe,
   // engine is one visible command away. We offer that command rather than
   // routing calls through `uvx` and paying for the fetch inside whichever
   // call runs first.
+  //
+  // This is checked BEFORE the uvx route on purpose, and it used to be after.
+  // uvx ships WITH uv, so a machine that has one has both, and the uvx route
+  // answered first and won every time: the install was never offered, every
+  // call went through uvx, and uvx served whatever environment it had cached.
+  // A walkthrough on 2026-11-13 built a layer stamped `engine: 0.7.0b3` six
+  // minutes after 0.7.0b4 reached PyPI, and nothing in the UI said so.
   for (const uv of uvCandidates(home)) {
     if (await probe.works([uv, '--version'])) {
       return { kind: 'install', via: engineInstall(uv) };
     }
   }
-  return { kind: 'install', via: installers()[0] };
+
+  // uvx but no uv -- unusual, and the one case where running through it is
+  // better than nothing. `kind: 'uvx'` so the panel says what that costs; it
+  // used to come back as `path`, so the first-run notice never appeared on
+  // the machine it was written for.
+  for (const argv of uvxCandidates(home)) {
+    if (await probe.works(probeFor(argv))) { return { kind: 'uvx', argv }; }
+  }
+
+  return { kind: 'install', via: bootstrap() };
 }

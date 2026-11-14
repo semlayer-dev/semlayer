@@ -40,12 +40,38 @@ export const PANEL_STATES = {
     cli: null, layer: undefined, others: 0, clients: [], drift: null,
     offer: {
       kind: 'install',
-      label: 'Install uv',
-      command: 'curl -LsSf https://astral.sh/uv/install.sh | sh',
-      note: 'A single binary. It brings its own Python, so nothing else is needed.',
+      stage: 'nothing',
+      label: 'Install semlayer',
+      command: 'curl -LsSf https://astral.sh/uv/install.sh | sh && '
+             + '"$HOME/.local/bin/uv" tool install --python 3.13 "semlayer[warehouses]"',
+      note: 'Two downloads in one step: uv, which brings its own Python, then the '
+          + 'engine and the warehouse drivers. About a minute, once. Nothing else '
+          + 'on your machine is touched.',
       alternatives: [
         { label: 'Homebrew', command: 'brew install uv',
           note: 'The same binary, if you would rather not pipe a script into a shell.' },
+        { label: 'With pip', command: 'pip install --user "semlayer[warehouses]"',
+          note: 'If you already have Python. Installs into your user site-packages.' },
+        { label: 'With pipx', command: 'pipx install "semlayer[warehouses]"',
+          note: 'Also needs Python, but keeps semlayer in its own environment.' },
+      ],
+    },
+  },
+  'panel-have-uv': {
+    // uv is installed and the engine is not: the second of the two installs,
+    // and the state a user was stuck in. The panel offered "Install uv" to
+    // someone who had just installed uv, three times, because the resolver's
+    // answer was computed and then thrown away.
+    cli: null, layer: undefined, others: 0, clients: [], drift: null,
+    offer: {
+      kind: 'install',
+      stage: 'uv',
+      label: 'Install the engine',
+      command: 'uv tool install --python 3.13 "semlayer[warehouses]"',
+      note: 'One time, about a minute -- it downloads a Python and the warehouse '
+          + 'drivers. It leaves a `semlayer` command on your PATH, and every call '
+          + 'after this one is instant.',
+      alternatives: [
         { label: 'With pip', command: 'pip install --user "semlayer[warehouses]"',
           note: 'If you already have Python. Installs into your user site-packages.' },
         { label: 'With pipx', command: 'pipx install "semlayer[warehouses]"',

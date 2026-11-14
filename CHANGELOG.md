@@ -2,6 +2,58 @@
 
 ## Unreleased
 
+## 0.7.0b5
+
+Everything here was found by one person walking the three steps on a clean
+machine and saying what happened.
+
+### A layer loaded from a path brings its warehouse with it
+
+The agent loaded the layer, chose the right tables, wrote the SQL — and
+`run_sql` answered "no warehouse connection is selected for this session",
+while `status` sat there listing that warehouse as available.
+
+`load_layer` and `autoload` both read `semantic_layer.warehouse` from the
+document. `Session.load(path)` did not, and that is the path
+`semlayer mcp <layer>` takes — which is how every editor and client config
+starts this server. The commonest way in was the only one that produced a
+layer you can read and cannot query.
+
+`warehouse_of(doc, layer_path)` is now the single place that reads it, and it
+resolves a relative DuckDB path against the document's own directory. The
+engine records the path inference ran with, so a server started anywhere else
+was selecting a file that is not there — the same defect one step later and
+harder to see. An explicit `--connection` still wins: it chooses the
+warehouse, and a named document then overrides only the document.
+
+### The instructions told agents there was no layer
+
+Asked about revenue with a 36-table layer loaded, an agent replied that no
+semantic layer was loaded and one would have to be built from a warehouse. It
+had called nothing. It was repeating the second sentence of this server's own
+instructions, which described the empty case before saying to call `status`.
+
+The instructions now lead with the call and make the empty case explicitly
+conditional, and `context_for_question` no longer says to start there "once a
+layer is loaded" — that invited the agent to decide the question for itself,
+when every tool already answers with `status` rather than failing.
+
+### Docs: install the engine, then point the client at it
+
+`docs/mcp.md` and `llms-install.md` led with `"command": "uvx"`. That makes a
+client's first launch fetch a Python and sixty-five packages, which most
+clients time out on and report as a failed server, and uvx then reuses a
+cached environment so a new release goes unnoticed. Both now lead with
+`uv tool install`, explain why a bare command name can fail inside a client
+that was launched from a dock, and keep uvx as a folded alternative with both
+costs stated.
+
+Both also now say what to do after writing the config: **start a new
+session**. A client reads its MCP server list once, at startup, so one that
+was already running has never seen the entry — and that failure is
+indistinguishable from a broken config, which is what sends people to debug
+the wrong thing.
+
 ## 0.7.0b4
 
 ### `semlayer discover`: what this machine can already reach

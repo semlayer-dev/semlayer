@@ -566,3 +566,82 @@ def test_what_to_do_next_names_connections_but_does_not_recite_twenty(_nowhere):
     assert "duckdb:w00.duckdb" in out["next"]
     assert "and 6 more" in out["next"]
     assert len(out["connections"]) == 12
+
+
+# --- a loaded layer brings its warehouse with it ---------------------------
+#
+# Found by a user, in the way that counts: the agent loaded the layer, chose
+# the right tables, wrote the SQL, and `run_sql` answered "no warehouse
+# connection is selected for this session". `semlayer mcp <layer>` -- how
+# every editor and client config starts this server -- was the one load path
+# that did not read the warehouse the document names.
+
+def _layer_with_warehouse(tmp_path, uri, name="w.yaml"):
+    import yaml
+    doc = {"semantic_layer": {"name": "x", "warehouse": uri,
+                              "tables": [{"name": "t", "columns": []}]}}
+    p = tmp_path / name
+    p.write_text(yaml.safe_dump(doc))
+    return p
+
+
+def test_loading_a_layer_selects_the_warehouse_it_names(tmp_path):
+    from semlayer.session import Session
+
+    s = Session()
+    s.load(_layer_with_warehouse(tmp_path, "snowflake:analytics_prod"))
+    assert s.connection == "snowflake:analytics_prod"
+    assert s.target() == "snowflake:analytics_prod"
+
+
+def test_a_relative_duckdb_path_resolves_against_the_layer_file(tmp_path):
+    """The engine records the path it ran with, not an absolute one.
+
+    So a server started anywhere else selects a file that is not there --
+    which is the DuckDB error, one step later and less obvious.
+    """
+    from semlayer.session import Session
+
+    s = Session()
+    s.load(_layer_with_warehouse(tmp_path, "duckdb:messy_mart.duckdb"))
+    assert s.connection == f"duckdb:{tmp_path / 'messy_mart.duckdb'}"
+
+
+def test_an_explicitly_chosen_connection_is_not_overridden(tmp_path):
+    """`--connection` picks the warehouse; a named document overrides the
+    DOCUMENT, which is how this command has always behaved."""
+    from semlayer.session import Session
+
+    s = Session()
+    s.select("snowflake:chosen_by_hand")
+    s.load(_layer_with_warehouse(tmp_path, "duckdb:messy_mart.duckdb"))
+    assert s.connection == "snowflake:chosen_by_hand"
+
+
+def test_warehouse_of_leaves_what_it_cannot_improve(tmp_path):
+    from semlayer.session import warehouse_of
+
+    doc = lambda u: {"semantic_layer": {"warehouse": u}}  # noqa: E731
+    assert warehouse_of(doc("duckdb:/abs/path.duckdb"), tmp_path / "w.yaml") \
+        == "duckdb:/abs/path.duckdb"
+    assert warehouse_of(doc("duckdb::memory:"), tmp_path / "w.yaml") == "duckdb::memory:"
+    assert warehouse_of(doc("postgresql://h/db"), tmp_path / "w.yaml") == "postgresql://h/db"
+    assert warehouse_of({"semantic_layer": {}}, tmp_path / "w.yaml") is None
+    assert warehouse_of(doc("   "), tmp_path / "w.yaml") is None
+
+
+def test_a_loaded_layer_can_actually_be_queried(tmp_path):
+    """The end of the chain the user hit: load, then run SQL."""
+    import duckdb
+
+    from semlayer.session import Session
+
+    db = tmp_path / "w.duckdb"
+    con = duckdb.connect(str(db))
+    con.execute("create table t (id integer)")
+    con.execute("insert into t values (1), (2)")
+    con.close()
+
+    s = Session()
+    s.load(_layer_with_warehouse(tmp_path, "duckdb:w.duckdb"))
+    assert s.open_source().query("select count(*) from t") == [(2,)]

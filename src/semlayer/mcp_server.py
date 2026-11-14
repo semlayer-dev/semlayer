@@ -438,13 +438,22 @@ def _server_class():
 # of this slice, because `infer` and `context_for_question` exist.
 _INSTRUCTIONS = (
     "semlayer models a data warehouse into a semantic layer and serves it to "
-    "you. Call `status` first. A semantic layer is not something this machine "
-    "has by default: it has to be BUILT from a warehouse, and until it is "
-    "there is nothing to search or query. If no layer is loaded, `status` "
-    "tells you which warehouse connections were found on this machine, which "
-    "layers were found already built, and how to start inference -- every "
-    "other tool answers with that same object when no layer is loaded, so "
-    "read `next` and act on it rather than retrying. "
+    "you. "
+    "CALL `status` BEFORE YOU ANSWER ANY QUESTION ABOUT THE USER'S DATA. It "
+    "is one call, it is instant, and it is the only thing that knows whether "
+    "a layer is loaded -- do not conclude from these instructions that there "
+    "is none. This server is most often started WITH a layer, and `status` "
+    "says so: `state` is `ready` and `layer` names it. Telling a user you "
+    "have no data, without having called `status`, is the one failure that "
+    "wastes everything the layer was built for. "
+    "If `status` reports a layer, go straight to `context_for_question`. "
+    "Only if it reports none does the rest of this paragraph apply: a "
+    "semantic layer has to be BUILT from a warehouse, and until it is there "
+    "is nothing to search or query. `status` then tells you which warehouse "
+    "connections were found on this machine, which layers were found already "
+    "built, and how to start inference -- every other tool answers with that "
+    "same object when no layer is loaded, so read `next` and act on it rather "
+    "than retrying. "
     "Never ask the user for a password or a key in chat. Credentials live in "
     "their environment, their `.env` file, their dbt profile, or their "
     "warehouse's connections file; you only ever pass names or URIs. "
@@ -492,7 +501,8 @@ def _register_session_tools(srv, session: Session) -> None:
     def status() -> str:
         """What this server has, what it can see, and what to do next.
 
-        Call this first. It answers with the loaded layer (its size, age, and
+        Call this first -- and always before telling a user you have no data
+        about their warehouse. It answers with the loaded layer (its size, age, and
         how many claims nobody has reviewed yet), the warehouse connections
         visible from this machine, and a `next` field saying what to do --
         including when there is no layer at all, which is the state a fresh
@@ -642,7 +652,13 @@ def _register_answer_tools(srv, session: Session) -> None:
 
     @srv.tool()
     def context_for_question(question: str) -> str:
-        """START EVERY QUESTION HERE once a layer is loaded.
+        """START EVERY QUESTION ABOUT THE USER'S DATA HERE.
+
+        Including when you are not sure a layer is loaded: if none is, this
+        answers with `status` instead of failing, so there is no reason to
+        decide for yourself that there is nothing to query. Deciding that
+        without calling anything is how a user with a 36-table layer loaded
+        was told the server had no data.
 
         Returns the part of the layer that bears on this question -- the
         tables it selected, their columns, keys, required filters and

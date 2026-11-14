@@ -987,6 +987,17 @@ export interface EngineOffer {
   label: string;
   command: string;
   note: string;
+  /**
+   * Which of the two installs this is.
+   *
+   * `nothing` — no uv and no engine, so the offer is uv.
+   * `uv` — uv is here and the engine is one command away.
+   *
+   * The screen read the same either way, which is how a user who had just
+   * installed uv could be offered uv again and conclude, fairly, that
+   * nothing he did had registered.
+   */
+  stage?: 'nothing' | 'uv';
   /** Other ways to get there, for anyone whose org blocks piping curl to sh. */
   alternatives: { label: string; command: string; note: string }[];
 }
@@ -1093,7 +1104,15 @@ export function renderServe(s: ServeState): string {
     ? '<div class="cap">Restart the client afterwards so it picks the server up.</div>'
     : ''}
 
-  ${configured.length ? `<h3>Then ask it</h3>
+  ${configured.length ? `<h3>Then restart ${esc(configured[0].label)}</h3>
+    <div class="pad" style="padding-top:0">
+      <div class="note"><b>Open a new session.</b> MCP clients read their server
+      list once, at startup &mdash; one that was already running when you
+      connected it will not list semlayer under
+      <span class="mono">/mcp</span>, and will tell you it has no data.</div>
+    </div>
+
+    <h3>Then ask it</h3>
     <div class="pad" style="padding-top:0">
       <pre style="margin-top:0">${esc(q)}</pre>
       <button class="outline" data-msg='${esc(JSON.stringify({ type: 'copy', source: q }))}'
@@ -1110,13 +1129,19 @@ function noCli(s: PanelState): string {
   const o = s.offer;
   // Nothing usable. The instruction must not assume Python: a VS Code user may
   // have none, and `uv` is a single binary that brings its own.
+  const second = o?.stage === 'uv';
   return `<div class="pad">
-    <p>semlayer needs its engine, which is a one-time install.</p>
-    <p class="dim">The extension runs the same CLI you would run in a terminal;
-    it carries no engine of its own.</p>
+    ${second
+      ? `<p><b>uv is installed.</b> One step left: the engine itself.</p>
+         <p class="dim">uv brings its own Python, so this is the last thing
+         that has to be downloaded.</p>`
+      : `<p>semlayer needs its engine, which is a one-time install.</p>
+         <p class="dim">The extension runs the same CLI you would run in a
+         terminal; it carries no engine of its own.</p>`}
     ${o ? `<pre>${esc(o.command)}</pre>
       <p class="dim">${esc(o.note)}</p>
-      <button data-cmd="semlayer.install">Run this in a terminal</button>
+      <button data-cmd="semlayer.install">${
+        second ? 'Install the engine' : 'Run this in a terminal'}</button>
       <p class="dim">It opens a terminal so you can see exactly what runs.</p>
       ${o.alternatives.length ? `<details><summary class="dim">Other ways</summary>
         ${o.alternatives.map((a) => `<p><b>${esc(a.label)}</b><br>
@@ -1167,6 +1192,10 @@ function resting(s: PanelState): string {
       ? '<p class="dim">No MCP client found on this machine.</p>' : ''}
     <button data-cmd="semlayer.configureClient">${
       missing.length ? `Connect ${esc(missing[0])}` : 'Connect an MCP client'}</button>
+    ${configured.length ? `<p class="dim" style="margin-top:6px">A client reads
+      its server list at startup. If one of these was already running when you
+      connected it, start a new session before asking &mdash; it will not list
+      semlayer until you do.</p>` : ''}
   </div>
   <h3>Findings</h3>
   <div class="pad" style="padding-top:0">
