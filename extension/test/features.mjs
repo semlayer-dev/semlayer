@@ -205,6 +205,14 @@ export const FEATURES = [
                'What was revenue last quarter?', 'context_for_question'],
     what: 'Step three is a screen like the other two: which clients can reach '
         + 'the layer, and the first thing worth typing once one can' },
+  { id: 'serve.restart', kind: 'render', view: 'serve',
+    contains: ['Then restart', 'Open a new session', 'at startup', '/mcp'],
+    what: 'Restarting the client is a STEP on this screen, named after the '
+        + 'client. It was a dim caption shown only while an unconnected client '
+        + 'remained -- so it disappeared the moment you connected your last '
+        + 'one, which is exactly when it starts to matter. A user connected '
+        + 'Claude Code, ran /mcp, saw nothing, and was told by the agent that '
+        + 'it had no data.' },
   { id: 'serve.noClient', kind: 'render', view: 'serve-none',
     absent: ['Then ask it'],
     what: 'With nothing connected there is nothing to ask yet, so the screen '
@@ -216,6 +224,16 @@ export const FEATURES = [
         + 'row under the checklist, below a rule because it is not a step' },
   { id: 'serve.configure', kind: 'contributes', command: 'semlayer.configureClient',
     what: 'Write an MCP client’s config' },
+  { id: 'serve.configure.runnable', kind: 'logic',
+    what: 'The config names an absolute command and keeps its arguments as '
+        + 'arguments. It wrote the whole argv joined into `command`, and a '
+        + 'bare `semlayer` whenever no route was resolved -- the client is a '
+        + 'different process with a different PATH, and a user got '
+        + '`executable not found` from an agent that then said it had no data.' },
+  { id: 'serve.configure.honest', kind: 'logic',
+    what: 'A config naming a command this machine does not have reads as NOT '
+        + 'connected, so the panel offers to write it again instead of '
+        + 'claiming a connection that cannot start' },
   { id: 'serve.states', kind: 'render', view: 'panel-resting',
     contains: ['MCP clients'],
     what: 'Which clients can see the layer, and which cannot' },
@@ -248,11 +266,33 @@ export const FEATURES = [
         + 'the code, while every test here passed because they read out/, '
         + 'which tsc had just rebuilt.' },
   { id: 'meta.noCli', kind: 'render', view: 'panel-no-cli',
-    contains: ['astral.sh/uv', 'one-time install'], absent: ['was not found on your PATH'],
-    what: 'A machine with no Python is given a bootstrap that needs no Python' },
+    contains: ['astral.sh/uv', 'tool install', 'one-time install'],
+    absent: ['was not found on your PATH'],
+    what: 'A machine with no Python is given a bootstrap that needs no Python, '
+        + 'and it is ONE step: uv and the engine in a single command. Asking '
+        + 'twice was an artifact of modelling what is missing rather than what '
+        + 'the user came for -- uv is not a thing anyone wants' },
   { id: 'meta.noCli.alternatives', kind: 'render', view: 'panel-no-cli',
     contains: ['brew install uv', 'pip install --user', 'pipx install'],
     what: 'Other install routes: pip and pipx at equal weight, not one buried under the other' },
+  { id: 'meta.haveUv', kind: 'render', view: 'panel-have-uv',
+    contains: ['uv is installed', 'One step left', 'uv tool install',
+               'Install the engine'],
+    absent: ['astral.sh/uv', 'brew install uv'],
+    what: 'With uv present the panel offers the ENGINE, not uv again. The '
+        + 'resolver always said so and the panel discarded it, always showing '
+        + 'installers()[0] -- so a user who had just installed uv was offered '
+        + 'uv a second time and a third' },
+  { id: 'meta.install.offered', kind: 'logic',
+    what: 'The install button runs the command the panel is OFFERING. It ran '
+        + 'installers()[0] regardless, so "Install the engine" installed uv a '
+        + 'second time and uv\u2019s own script signed off with '
+        + '"everything\u2019s installed!" while there was still no engine.' },
+  { id: 'meta.stage', kind: 'logic',
+    what: 'Three stages, not a yes/no: nothing, uv, engine. Check again and '
+        + 'the install watcher both asked "is there an engine?" and so called '
+        + 'the middle state failure -- "Still no engine ... press Check again" '
+        + 'on the one press that had just succeeded' },
   { id: 'meta.noCli.recheck', kind: 'render', view: 'panel-no-cli',
     contains: ['Check again', 'nothing needs restarting'],
     what: 'A way forward after an install finishes, in the panel itself' },

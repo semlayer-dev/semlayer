@@ -728,6 +728,26 @@ def visible_layers() -> list[dict]:
     return out
 
 
+def warehouse_of(doc: dict, layer_path: str | Path | None = None) -> str | None:
+    """The warehouse a document names, resolved so it can actually be opened.
+
+    A layer records `warehouse: duckdb:messy_mart.duckdb` RELATIVE to wherever
+    inference ran, so a server started in another directory selects a path
+    that is not there. Resolved against the document's own directory, which
+    is the only reading that travels with the file.
+    """
+    uri = (doc.get("semantic_layer") or {}).get("warehouse")
+    if not isinstance(uri, str) or not uri.strip():
+        return None
+    uri = uri.strip()
+    if not uri.startswith("duckdb:") or layer_path is None:
+        return uri
+    rest = uri[len("duckdb:"):]
+    if not rest or rest == ":memory:" or Path(rest).is_absolute():
+        return uri
+    return f"duckdb:{(Path(layer_path).parent / rest).resolve()}"
+
+
 def built_without_model(doc: dict) -> bool | None:
     """Whether THIS engine built the layer with no model. None if unknown.
 
@@ -1299,6 +1319,18 @@ class Session:
         # it swaps a layer in under a live conversation.
         doc = load_document(path)
         self.doc, self.layer_path = doc, Path(path)
+        # The document names the warehouse it was built from, and until now
+        # only `load_layer` and `autoload` read it -- so `semlayer mcp
+        # <layer>`, which is how every editor and client config starts this
+        # server, loaded a layer with no connection behind it. The agent did
+        # everything right, wrote the SQL, and `run_sql` answered "no
+        # warehouse connection is selected". A layer you can read and cannot
+        # query is a dead end for the one thing this server exists to do.
+        #
+        # Not when a connection was chosen explicitly: `--connection` picks
+        # the warehouse and a named document only overrides the DOCUMENT.
+        if not self.connection:
+            self.connection = warehouse_of(doc, self.layer_path) or self.connection
 
     def load_cached(self, connection: str) -> bool:
         """Load the cached layer for `connection`, if there is a readable one.
@@ -1352,7 +1384,7 @@ class Session:
         if match and match["connection"]:
             self.connection = match["connection"]
         elif self.doc is not None:
-            self.connection = (self.doc.get("semantic_layer", {}).get("warehouse")
+            self.connection = (warehouse_of(self.doc, self.layer_path)
                                or self.connection)
         self.autoloaded = False
         _mark_used(str(path))

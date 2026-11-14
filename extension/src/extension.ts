@@ -8,9 +8,11 @@
  */
 import * as vscode from 'vscode';
 import { Linter } from './diagnostics';
-import { Panel, readDrift, invalidateDrift, invalidateFindings } from './panel';
+import {
+  Panel, readDrift, invalidateDrift, invalidateFindings, currentStage, currentRoute,
+} from './panel';
 import * as flows from './flows';
-import { installers as engineInstallers } from './engine';
+import { offerFor } from './engine';
 import { settingsToArgs } from './views';
 import { ReviewPanel } from './review';
 import { run, version, CliError } from './cli';
@@ -103,21 +105,39 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
 
   cmd('semlayer.recheck', async () => {
     await refresh();
-    const found = (await version()) !== null;
-    vscode.window.showInformationMessage(found
-      ? 'Found the engine. You are ready to create a semantic layer.'
-      : 'Still no engine. If the install is still running, give it a moment and press '
-        + 'Check again.');
+    // Three answers, not two. "Is there an engine?" was asked as a yes/no,
+    // so installing uv -- real progress, and the whole of the first step --
+    // was reported as "Still no engine ... press Check again", which reads as
+    // a loop. See engine.stage.
+    switch (await currentStage()) {
+      case 'engine':
+        vscode.window.showInformationMessage(
+          'Found the engine. You are ready to create a semantic layer.');
+        return;
+      case 'uv':
+        vscode.window.showInformationMessage(
+          'uv is installed. One step left: the engine itself.', 'Install the engine')
+          .then((a) => { if (a) { void vscode.commands.executeCommand('semlayer.install'); } });
+        return;
+      default:
+        vscode.window.showInformationMessage(
+          'Still nothing found. If the install is still running, give it a moment '
+          + 'and press Check again.');
+    }
   });
 
-  cmd('semlayer.install', () => {
+  cmd('semlayer.install', async () => {
+    // Whatever the panel is OFFERING, not a hard-coded first entry. It ran
+    // `installers()[0]` -- always the uv bootstrap -- so a user looking at
+    // "Install the engine" pressed it and watched uv install itself again.
+    const via = offerFor(await currentRoute());
+
     // We are asking the user to run a script from the internet, so it runs
     // where they can see it. Hiding that would be the wrong trade for a
     // product whose claim is that it tells you what it is doing.
-    const [first] = engineInstallers();
-    const term = vscode.window.createTerminal('semlayer: install the engine');
+    const term = vscode.window.createTerminal(`semlayer: ${via.label.toLowerCase()}`);
     term.show();
-    term.sendText(first.command);
+    term.sendText(via.command);
 
     // A terminal command is fire-and-forget: there is no completion event to
     // wait on. So poll for the binary appearing, and stop as soon as it does.
@@ -284,7 +304,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         await mcp.configure(client, layer.uri);
         await refresh();
         vscode.window.showInformationMessage(
-          `${client.label} now serves ${layer.name}. Restart it to pick the server up.`);
+          `${client.label} now serves ${layer.name}. Start a NEW ${client.label} `
+          + 'session before asking: a client reads its MCP servers once, at startup.');
       }
       return;
     }
@@ -451,7 +472,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     await mcp.configure(pick.client, layer.uri);
     await refresh();
     vscode.window.showInformationMessage(
-      `${pick.label} now serves ${layer.name}. Restart it to pick the server up.`);
+      `${pick.label} now serves ${layer.name}. Start a NEW ${pick.label} session `
+      + 'before asking: a client reads its MCP servers once, at startup.');
   });
 
   await refresh();
@@ -589,15 +611,27 @@ async function watchForEngine(refresh: () => Promise<void>): Promise<void> {
   const STEP_MS = 2_000;
   const started = Date.now();
 
+  // What was true before the terminal started, so an ADVANCE can be seen.
+  // Watching only for an engine meant the uv install -- which cannot produce
+  // one -- ran its two minutes out in silence and said nothing at all.
+  const before = await currentStage();
+
   while (Date.now() - started < DEADLINE_MS) {
     await new Promise((r) => setTimeout(r, STEP_MS));
     await refresh();
-    if ((await version()) !== null) {
+    const now = await currentStage();
+    if (now === 'engine') {
       vscode.window.showInformationMessage(
         'semlayer is ready. Create a semantic layer from a warehouse to begin.',
         'Create').then((a) => {
           if (a) { void vscode.commands.executeCommand('semlayer.createLayer'); }
         });
+      return;
+    }
+    if (now === 'uv' && before === 'nothing') {
+      vscode.window.showInformationMessage(
+        'uv is installed. One step left: the engine itself.', 'Install the engine')
+        .then((a) => { if (a) { void vscode.commands.executeCommand('semlayer.install'); } });
       return;
     }
   }

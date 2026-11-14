@@ -55,7 +55,9 @@ semlayer has no connector for — Redshift, Databricks, T-SQL, Trino, ClickHouse
 Oracle, MySQL.
 
 **Connects an MCP client in one click.** Claude Code, Cline, Cursor and Claude
-Desktop. Writing that JSON by hand is the step that loses people.
+Desktop. Writing that JSON by hand is the step that loses people. Start a new
+session of the client afterwards — every one of them reads its server list at
+startup, so a window that was already open will not see semlayer.
 
 ## Requirements
 
@@ -112,8 +114,12 @@ Expected, within limits. Ranges are reconstructed rather than reported — see
 Known gaps below. The message and the fix are always right even when the
 underline is a few characters off.
 
-**Nothing happened after connecting an MCP client.**
-MCP clients read their config at startup. Restart the client.
+**The client does not list semlayer — `/mcp` shows nothing.**
+Start a new session of that client. MCP clients read their server list once,
+at startup, so one that was already running when you connected it has never
+seen the entry. Nothing is wrong with the config; it is read too early. In
+Claude Code the symptom is `/mcp` without semlayer in it, and an agent that
+tells you it has no revenue data.
 
 **`semlayer: Get started`** reopens the walkthrough at any time.
 

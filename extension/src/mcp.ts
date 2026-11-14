@@ -9,7 +9,8 @@
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { cliPath } from './cli';
+import { cliArgv } from './cli';
+import { entryWorks, serverEntry } from './mcpconfig';
 
 export interface Client {
   id: string;
@@ -70,7 +71,14 @@ export async function stateOf(client: Client): Promise<ClientState> {
     const text = Buffer.from(raw).toString('utf8').trim();
     const cfg = (text ? JSON.parse(text) : {}) as Record<string, unknown>;
     const servers = cfg.mcpServers as Record<string, unknown> | undefined;
-    return servers && 'semlayer' in servers ? 'configured' : 'present';
+    if (!servers || !('semlayer' in servers)) { return 'present'; }
+    // An entry naming a command that is not on this machine is not a
+    // connection. One was written with a bare `semlayer` while the engine
+    // lived somewhere the client could not see, and this reported it as
+    // connected right up to the moment the agent said it had no data.
+    // Reporting it as `present` is what puts "Connect Claude Code" back in
+    // the panel, and that button rewrites the entry correctly.
+    return entryWorks(servers.semlayer) ? 'configured' : 'present';
   } catch {
     return 'present';   // unreadable JSON is still a client that exists
   }
@@ -84,10 +92,7 @@ export async function configure(client: Client, layer: vscode.Uri): Promise<void
   const cfg = await readJson(client.file);
   const servers = (cfg.mcpServers ?? {}) as Record<string, unknown>;
 
-  servers.semlayer = {
-    command: cliPath(),
-    args: ['mcp', layer.fsPath],
-  };
+  servers.semlayer = serverEntry(layer.fsPath, cliArgv());
   cfg.mcpServers = servers;
 
   const uri = vscode.Uri.file(client.file);

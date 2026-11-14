@@ -21,6 +21,13 @@ semlayer mcp layer.yaml            # serve a specific layer
 semlayer mcp --connection snowflake:prod   # the layer cached for one warehouse
 ```
 
+A layer names the warehouse it was built from, so `semlayer mcp layer.yaml`
+also selects that warehouse and `run_sql` can execute against it. A relative
+DuckDB path in the document is read against the document's own directory, so
+the server works wherever a client happens to start it. `--connection` wins
+when both are given: it chooses the warehouse, and a named document then
+overrides only the document.
+
 ## Setup
 
 There is no questionnaire. Add the server, ask a data question, and it asks
@@ -42,8 +49,33 @@ Point the client at the command and leave the arguments off.
 > exactly the machine this section is for. Raise or drop the pin once every
 > dependency ships wheels for the Python `uv` would otherwise choose.
 
-If you have [`uv`](https://docs.astral.sh/uv/), this is the whole of step one.
-`uvx` fetches semlayer on first launch, so there is no terminal step at all:
+If you have [`uv`](https://docs.astral.sh/uv/), install the engine once:
+
+```bash
+uv tool install --python 3.13 "semlayer[warehouses]"
+```
+
+It brings its own Python, takes about a minute, and leaves a `semlayer`
+command on your PATH. Then point the client at it:
+
+```json
+{
+  "mcpServers": {
+    "semlayer": {
+      "command": "semlayer",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Use the **full path** if your client cannot find it — `which semlayer` will
+tell you, and `~/.local/bin` is usually it. A client launched from a dock or
+a desktop icon does not inherit your shell's PATH, so a bare name that works
+in a terminal can still fail there with `executable not found`.
+
+<details>
+<summary>Without installing anything: run it through <code>uvx</code></summary>
 
 ```json
 {
@@ -56,8 +88,25 @@ If you have [`uv`](https://docs.astral.sh/uv/), this is the whole of step one.
 }
 ```
 
-Paste it into your client's config, restart the client, and ask it "what does
-semlayer have?" — it will call `status`.
+This works and needs no terminal step, but know the two costs before you
+choose it. The **first launch fetches a Python and about sixty-five
+packages** — minutes — and your client is likely to give up on the server
+before that finishes and report it as failed; starting it again once the
+fetch has completed works. And `uvx` reuses a cached environment, so a
+version released after your first run will not be picked up until that cache
+turns over. `uv tool install` has neither problem, and upgrading is then an
+explicit `uv tool upgrade semlayer`.
+
+</details>
+
+Paste your choice into the client's config, then **start a new session of the
+client** and ask it "what does semlayer have?" — it will call `status`.
+
+A client reads its MCP server list once, at startup. One that was already
+running when you wrote the config has never seen the entry, so it will list
+no semlayer tools and the agent will tell you it has no data — with a config
+that is perfectly correct. That is the commonest way this setup appears to
+fail.
 
 The `[warehouses]` extra is not decoration. The Snowflake, BigQuery and
 Postgres drivers are optional dependencies, and without them the server can
