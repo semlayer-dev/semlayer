@@ -52,10 +52,26 @@ jobs:
       - name: Package
         run: npm run package
       - name: Publish to the VS Code Marketplace
+        # `--oidc`, NOT `--azure-credential`. They are two different things
+        # and the difference is which CI you are on: `--azure-credential` is
+        # the Azure Pipelines route and wants a Microsoft Entra service
+        # principal, which on a personal-account publisher fails at publish
+        # time with "corporate credentials required" after the token check
+        # has already passed. `--oidc` is the GitHub Actions route, and the
+        # policy that authorises it is created on the publisher's Trusted
+        # Publishing tab at marketplace.visualstudio.com/manage.
+        #
+        # This also beats a PAT for a reason with a date on it: global Azure
+        # DevOps personal access tokens are retired on 1 December 2026.
+        #
+        # The minted credential lives 15 minutes and each GitHub OIDC token
+        # can be exchanged exactly once, so this step must not be retried in
+        # place -- re-run the job, which mints a new one.
+        #
         # --skip-duplicate so re-running a release does not fail on a version
         # that is already live; the marketplace refuses to replace one.
         run: >
-          npx vsce publish --no-dependencies --azure-credential
+          npx vsce publish --no-dependencies --oidc
           --packagePath semlayer-*.vsix --skip-duplicate
       - name: Publish to Open VSX (what Cursor reads)
         # Trusted publishing, like PyPI and the marketplace above: the
