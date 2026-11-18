@@ -125,6 +125,15 @@
   .res ul { margin: 0; list-style: none; }
   .res li { margin-bottom: 0.7rem; font-size: 0.92rem; line-height: 1.45; }
   .res li a { font-weight: 600; text-decoration: none; }
+  .trybar {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem 1.2rem;
+    background: var(--card); border-left: 3px solid var(--brand);
+    padding: 0.9rem 1.1rem; border-radius: 4px; margin: 0 0 2rem;
+  }
+  .trybar div { flex: 1 1 18rem; }
+  .trybar strong { display: block; }
+  .trybar span { color: var(--muted); font-size: 0.93rem; }
+  .trybar .cta { margin: 0; white-space: nowrap; }
   .res li a:hover { text-decoration: underline; }
   .res li span { display: block; color: var(--muted); font-size: 0.87rem; }
 </style>
@@ -144,6 +153,12 @@
   <a class="md" href="https://medium.com/@rajdevnath" aria-label="semlayer on Medium"><svg viewBox="0 0 24 24" role="img" aria-hidden="true" focusable="false"><path d="M13.54 12a6.8 6.8 0 01-6.77 6.82A6.8 6.8 0 010 12a6.8 6.8 0 016.77-6.82A6.8 6.8 0 0113.54 12zM20.96 12c0 3.54-1.51 6.42-3.38 6.42-1.87 0-3.39-2.88-3.39-6.42s1.52-6.42 3.39-6.42 3.38 2.88 3.38 6.42M24 12c0 3.17-.53 5.75-1.19 5.75-.66 0-1.19-2.58-1.19-5.75s.53-5.75 1.19-5.75C23.47 6.25 24 8.83 24 12z"/></svg></a>
   </span>
 </nav>
+
+<div class="trybar">
+  <div><strong>Try semlayer in your browser.</strong>
+  <span>Nothing to install and no key needed. It builds a semantic layer for a sample warehouse, or for your own files, inside the tab.</span></div>
+  <a class="cta" href="https://try.semlayer.dev">Try it now &rarr;</a>
+</div>
 
 <h1>sem<span>layer</span></h1>
 <p class="tagline">Your AI writes perfect SQL and returns the wrong number.</p>
